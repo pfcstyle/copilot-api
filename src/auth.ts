@@ -77,6 +77,7 @@ const AUTH_PROVIDER_LABELS: Record<AuthProviderName, string> = {
   deepseek: "DeepSeek",
   dashscope: "DashScope",
   openrouter: "OpenRouter",
+  doubao: "Doubao (Volcengine Ark)",
   custom: "Custom provider",
 }
 

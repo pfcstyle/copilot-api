@@ -1,6 +1,7 @@
 import type { Context, Env } from "hono"
 
 import { createHandlerLogger } from "~/lib/logger"
+import { isResponsesProviderType } from "~/lib/config"
 import { resolveProviderConfig } from "~/lib/provider-resolver"
 import { createFallbackModel } from "~/lib/provider-model"
 import { getTokenCount } from "~/lib/tokenizer"
@@ -46,7 +47,7 @@ export async function handleProviderCountTokensForProvider(
   const translationOptions =
     (
       providerConfig.type === "openai-compatible"
-      || providerConfig.type === "openai-responses"
+      || isResponsesProviderType(providerConfig.type)
     ) ?
       {
         supportPdf: modelConfig?.supportPdf,

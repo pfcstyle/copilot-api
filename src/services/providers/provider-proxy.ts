@@ -5,6 +5,7 @@ import {
 } from "undici"
 
 import type { ResolvedProviderConfig } from "~/lib/config"
+import { getProviderApiPathPrefix } from "~/lib/config"
 import { createTimeoutDispatcher } from "~/lib/timeout-dispatcher"
 import type { AnthropicMessagesPayload } from "~/lib/types/anthropic"
 import type { ChatCompletionsPayload } from "~/lib/types/chat-completions"
@@ -13,6 +14,19 @@ import { getResponsesTransportConfig } from "~/lib/config"
 import { fetchResponsesWithLifecycle } from "~/services/responses-http"
 
 const SHARED_FORWARDABLE_HEADERS = ["accept", "user-agent"] as const
+
+/**
+ * Upstream URL for a provider endpoint. The path prefix depends on the
+ * provider type so Ark ("/v3") and OpenAI-style providers ("/v1") both work
+ * from a prefix-free baseUrl.
+ */
+function buildProviderUpstreamUrl(
+  providerConfig: ResolvedProviderConfig,
+  endpointPath: string,
+): string {
+  const prefix = getProviderApiPathPrefix(providerConfig.type)
+  return `${providerConfig.baseUrl}${prefix}${endpointPath}`
+}
 
 const ANTHROPIC_FORWARDABLE_HEADERS = [
   "anthropic-version",
@@ -93,7 +107,7 @@ export async function forwardProviderMessages(
   requestHeaders: Headers,
 ): Promise<Response> {
   consola.log(`<-- model: ${payload.model}`)
-  return await fetch(`${providerConfig.baseUrl}/v1/messages`, {
+  return await fetch(buildProviderUpstreamUrl(providerConfig, "/messages"), {
     method: "POST",
     headers: buildProviderUpstreamHeaders(providerConfig, requestHeaders),
     body: JSON.stringify(payload),
@@ -106,11 +120,14 @@ export async function forwardProviderChatCompletions(
   requestHeaders: Headers,
 ): Promise<Response> {
   consola.log(`<-- model: ${payload.model}`)
-  return await fetch(`${providerConfig.baseUrl}/v1/chat/completions`, {
-    method: "POST",
-    headers: buildProviderUpstreamHeaders(providerConfig, requestHeaders),
-    body: JSON.stringify(payload),
-  })
+  return await fetch(
+    buildProviderUpstreamUrl(providerConfig, "/chat/completions"),
+    {
+      method: "POST",
+      headers: buildProviderUpstreamHeaders(providerConfig, requestHeaders),
+      body: JSON.stringify(payload),
+    },
+  )
 }
 
 export async function forwardProviderResponses(
@@ -122,7 +139,7 @@ export async function forwardProviderResponses(
   consola.log(`<-- model: ${payload.model}`)
   const transportConfig = getResponsesTransportConfig()
   return await fetchResponsesWithLifecycle(
-    `${providerConfig.baseUrl}/v1/responses`,
+    buildProviderUpstreamUrl(providerConfig, "/responses"),
     {
       method: "POST",
       headers: buildProviderUpstreamHeaders(providerConfig, requestHeaders),
@@ -142,7 +159,7 @@ export async function forwardProviderModels(
   providerConfig: ResolvedProviderConfig,
   requestHeaders: Headers,
 ): Promise<Response> {
-  return await fetch(`${providerConfig.baseUrl}/v1/models`, {
+  return await fetch(buildProviderUpstreamUrl(providerConfig, "/models"), {
     method: "GET",
     headers: buildProviderUpstreamHeaders(providerConfig, requestHeaders),
     signal: AbortSignal.timeout(PROVIDER_MODELS_TIMEOUT_MS),
@@ -161,7 +178,7 @@ function resolveProviderRequestUrl(
   requestUrl: string,
   path: string,
 ): string {
-  const upstreamUrl = new URL(`${providerConfig.baseUrl}${path}`)
+  const upstreamUrl = new URL(buildProviderUpstreamUrl(providerConfig, path))
   upstreamUrl.search = new URL(requestUrl, "http://localhost").search
   return upstreamUrl.toString()
 }
@@ -174,7 +191,7 @@ export async function forwardProviderAlphaSearch(
   const body = await request.arrayBuffer()
 
   return await fetch(
-    resolveProviderRequestUrl(providerConfig, request.url, "/v1/alpha/search"),
+    resolveProviderRequestUrl(providerConfig, request.url, "/alpha/search"),
     {
       method: "POST",
       headers,
@@ -207,7 +224,7 @@ export async function forwardProviderImages(
   const upstreamUrl = resolveProviderRequestUrl(
     providerConfig,
     request.url,
-    `/v1/images/${operation}`,
+    `/images/${operation}`,
   )
 
   if (typeof Bun !== "undefined") {

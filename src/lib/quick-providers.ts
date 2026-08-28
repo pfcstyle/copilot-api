@@ -38,6 +38,12 @@ export const QUICK_PROVIDER_CONFIGS = {
     pricingCurrency: "USD",
     editableType: false,
   },
+  doubao: {
+    type: "ark-doubao",
+    baseUrl: "https://ark.cn-beijing.volces.com/api/coding",
+    pricingCurrency: "CNY",
+    editableType: true,
+  },
 } satisfies Record<string, QuickProviderConfig>
 
 export type QuickProviderName = keyof typeof QUICK_PROVIDER_CONFIGS

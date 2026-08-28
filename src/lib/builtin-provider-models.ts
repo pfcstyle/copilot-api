@@ -540,6 +540,108 @@ export class BuiltinProviderModelRegistry {
         },
       },
     },
+    doubao: {
+      "ark-code-latest": {
+        contextWindow: 1_048_576,
+        inputModalities: ["text", "image"],
+        maxOutputTokens: 64_000,
+        pricing: {
+          cachedInput: 0.16,
+          input: 0.8,
+          output: 8,
+        },
+      },
+      "doubao-seed-evolving": {
+        contextWindow: 1_048_576,
+        inputModalities: ["text", "image"],
+        maxOutputTokens: 262_144,
+        pricing: {
+          cachedInput: 0.16,
+          input: 0.8,
+          output: 8,
+        },
+      },
+      "doubao-seed-2.1-turbo": {
+        contextWindow: 1_048_576,
+        inputModalities: ["text", "image"],
+        maxOutputTokens: 64_000,
+        pricing: {
+          cachedInput: 0.16,
+          input: 0.8,
+          output: 8,
+        },
+      },
+      "doubao-seed-2.0-lite": {
+        contextWindow: 262_144,
+        inputModalities: ["text", "image"],
+        maxOutputTokens: 64_000,
+        pricing: {
+          cachedInput: 0.06,
+          input: 0.3,
+          output: 1.2,
+        },
+      },
+      "glm-5.3": {
+        contextWindow: 1_048_576,
+        inputModalities: ["text"],
+        maxOutputTokens: 131_072,
+        pricing: {
+          cachedInput: 0.8,
+          input: 4,
+          output: 16,
+        },
+      },
+      "deepseek-v4-pro": {
+        contextWindow: 1_048_576,
+        inputModalities: ["text"],
+        maxOutputTokens: 131_072,
+        pricing: {
+          cachedInput: 0.08,
+          input: 4,
+          output: 12,
+        },
+      },
+      "deepseek-v4-flash": {
+        contextWindow: 1_048_576,
+        inputModalities: ["text"],
+        maxOutputTokens: 393_216,
+        pricing: {
+          cachedInput: 0.02,
+          input: 1,
+          output: 4,
+        },
+      },
+      "glm-5.2": {
+        contextWindow: 1_048_576,
+        inputModalities: ["text"],
+        maxOutputTokens: 131_072,
+        pricing: {
+          cachedInput: 0.8,
+          input: 4,
+          output: 16,
+        },
+      },
+      "kimi-k2.7-code": {
+        contextWindow: 262_144,
+        inputModalities: ["text", "image"],
+        maxOutputTokens: 64_000,
+        pricing: {
+          cachedInput: 0.19,
+          input: 0.95,
+          output: 4,
+        },
+      },
+      "minimax-m3": {
+        contextWindow: 1_000_000,
+        inputModalities: ["text", "image"],
+        maxOutputTokens: 64_000,
+        pricing: {
+          cachedInput: 0.06,
+          input: 0.3,
+          output: 1.2,
+        },
+      },
+    },
   }
 
   private readonly modelCatalog: BuiltinProviderModelCatalog

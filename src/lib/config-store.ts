@@ -102,6 +102,7 @@ export const SUPPORTED_PROVIDER_TYPES = [
   "anthropic",
   "openai-compatible",
   "openai-responses",
+  "ark-doubao",
 ] as const
 export type ProviderType = (typeof SUPPORTED_PROVIDER_TYPES)[number]
 export type ToolContentSupportType = "array" | "image" | "pdf"

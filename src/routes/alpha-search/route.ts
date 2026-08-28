@@ -4,6 +4,7 @@ import consola from "consola"
 import {
   getAlphaSearchModel,
   isAlphaSearchCodexPriorityEnabled,
+  isResponsesProviderType,
   resolveEffectiveProviderType,
   resolveMappedModel,
   type ResolvedProviderConfig,
@@ -284,10 +285,12 @@ async function isNativeResponsesModel(model: string): Promise<boolean> {
       )
     return (
       providerConfig !== null
-      && alphaSearchRouteDependencies.resolveEffectiveProviderType(
-        providerConfig,
-        providerAlias.model,
-      ) === "openai-responses"
+      && isResponsesProviderType(
+        alphaSearchRouteDependencies.resolveEffectiveProviderType(
+          providerConfig,
+          providerAlias.model,
+        ),
+      )
     )
   }
 
