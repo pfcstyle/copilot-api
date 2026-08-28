@@ -10,6 +10,8 @@ import {
 } from "~/lib/config"
 import { builtinProviderModelRegistry } from "~/lib/builtin-provider-models"
 import { QUICK_PROVIDER_CONFIGS } from "~/lib/quick-providers"
+import type { ResponsesPayload } from "~/lib/types/responses"
+import { normalizeProviderResponsesReasoningEffort } from "~/routes/provider/utils"
 import {
   forwardProviderChatCompletions,
   forwardProviderMessages,
@@ -95,6 +97,21 @@ describe("ark-doubao provider type", () => {
     expect(doubao.baseUrl).toBe("https://ark.cn-beijing.volces.com/api/coding")
     expect(doubao.baseUrl.endsWith("/v1")).toBe(false)
     expect(doubao.baseUrl.endsWith("/v3")).toBe(false)
+  })
+
+  test("downgrades the unsupported none reasoning effort for Ark", () => {
+    const payload: ResponsesPayload = {
+      model: "kimi-k2.7-code",
+      reasoning: { effort: "none" as const },
+    }
+
+    expect(
+      normalizeProviderResponsesReasoningEffort(
+        payload,
+        createArkProviderConfig(),
+      ),
+    ).toEqual({ from: "none", to: "low" })
+    expect(payload.reasoning?.effort).toBe("low")
   })
 })
 
@@ -212,7 +229,7 @@ describe("doubao /v1/models catalog source", () => {
       return Promise.resolve(
         Response.json({ data: [{ id: "deepseek-v4-pro-260425" }] }),
       )
-    }) as typeof globalThis.fetch
+    }) as unknown as typeof globalThis.fetch
 
     const { modelRoutes } = await import("~/routes/models/route")
     const response = await modelRoutes.request("/", {

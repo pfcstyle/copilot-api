@@ -12,6 +12,17 @@ interface SamplingPayload {
   top_k?: number | null
 }
 
+// Ark Coding Plan models, including kimi-k2.7-code, always run in thinking
+// mode. The upstream Responses API rejects `reasoning.effort: "none"` rather
+// than treating it as a request for the lowest thinking level.
+const ARK_RESPONSES_REASONING_EFFORTS = [
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const
+
 export const applyModelDefaults = (
   payload: SamplingPayload,
   modelConfig: ModelConfig | undefined,
@@ -46,10 +57,22 @@ export const normalizeProviderResponsesReasoningEffort = (
     payload.model,
   )
   const configuredEfforts = modelConfig?.reasoningEfforts
-  const supportedEfforts =
+  const configuredSupportedEfforts =
     configuredEfforts && configuredEfforts.length > 0 ?
       configuredEfforts
     : builtinModelConfig?.reasoningEfforts
+  const supportedEfforts = (() => {
+    if (providerConfig.type !== "ark-doubao") {
+      return configuredSupportedEfforts
+    }
+
+    const arkEfforts = configuredSupportedEfforts?.filter(
+      (effort) => effort !== "none",
+    )
+    return arkEfforts && arkEfforts.length > 0 ?
+        arkEfforts
+      : [...ARK_RESPONSES_REASONING_EFFORTS]
+  })()
 
   const resolvedEffort = resolveSupportedReasoningEffort(
     payload.reasoning.effort,
