@@ -90,7 +90,7 @@ describe("auth login validation", () => {
     )
 
     expect(output).toBe(
-      "Unknown provider 'unknown'. Expected one of: copilot, codex, opencode-go, kimi, deepseek, dashscope, openrouter, doubao, custom",
+      "Unknown provider 'unknown'. Expected one of: copilot, codex, opencode-go, kimi, deepseek, dashscope, openrouter, doubao, ali, custom",
     )
   })
 
@@ -300,6 +300,34 @@ describe("auth login validation", () => {
       enabled: true,
       pricingCurrency: "USD",
       type: "anthropic",
+    })
+  })
+
+  test("configures ali with OpenAI Responses defaults", () => {
+    const tempDir = createTempDir()
+    writeConfigFile(tempDir, {})
+
+    runScript(
+      tempDir,
+      `
+      const consolaModule = await import("consola");
+      const consola = consolaModule.default ?? consolaModule;
+      const answers = ["ali-key", ""];
+      consola.prompt = async () => answers.shift();
+      consola.info = () => {};
+      consola.success = () => {};
+      const { runAuthLogin } = await import("./src/auth");
+      await runAuthLogin({ provider: "ali", verbose: false, showToken: false });
+      `,
+    )
+
+    expect(readConfigFile(tempDir).providers?.ali).toEqual({
+      apiKey: "ali-key",
+      baseUrl:
+        "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+      enabled: true,
+      pricingCurrency: "CNY",
+      type: "openai-responses",
     })
   })
 

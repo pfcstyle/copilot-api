@@ -4,7 +4,7 @@ cd /d "%~dp0"
 
 title Copilot API Gateway
 echo ================================================
-echo  Copilot API Gateway  (Copilot + Doubao)
+echo  Copilot API Gateway  (Copilot + Doubao + Ali)
 echo ================================================
 echo.
 

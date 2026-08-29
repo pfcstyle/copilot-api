@@ -44,6 +44,13 @@ export const QUICK_PROVIDER_CONFIGS = {
     pricingCurrency: "CNY",
     editableType: true,
   },
+  ali: {
+    type: "openai-responses",
+    baseUrl:
+      "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+    pricingCurrency: "CNY",
+    editableType: false,
+  },
 } satisfies Record<string, QuickProviderConfig>
 
 export type QuickProviderName = keyof typeof QUICK_PROVIDER_CONFIGS

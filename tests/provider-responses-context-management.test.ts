@@ -493,6 +493,37 @@ describe("provider Responses context management", () => {
     expect(body.reasoning?.effort).toBe("low")
   })
 
+  test("forwards Aliyun Token Plan Responses without duplicating /v1", async () => {
+    providerConfig = {
+      apiKey: "provider-key",
+      authType: "authorization",
+      baseUrl:
+        "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+      models: {
+        "kimi-k2.7-code": {},
+      },
+      name: "ali",
+      type: "openai-responses",
+    }
+
+    const response = await createApp().request("/ali/v1/responses", {
+      body: JSON.stringify({
+        input: "hello",
+        model: "kimi-k2.7-code",
+      }),
+      headers: {
+        "content-type": "application/json",
+      },
+      method: "POST",
+    })
+
+    expect(response.status).toBe(200)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/responses",
+    )
+  })
+
   test("keeps codex-prefixed provider models on the native Responses route for Codex clients", async () => {
     providerConfig = {
       apiKey: "provider-key",

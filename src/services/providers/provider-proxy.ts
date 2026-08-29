@@ -17,15 +17,19 @@ const SHARED_FORWARDABLE_HEADERS = ["accept", "user-agent"] as const
 
 /**
  * Upstream URL for a provider endpoint. The path prefix depends on the
- * provider type so Ark ("/v3") and OpenAI-style providers ("/v1") both work
- * from a prefix-free baseUrl.
+ * provider type so Ark ("/v3") and OpenAI-style providers ("/v1") work from
+ * a prefix-free baseUrl. A baseUrl that already ends with the provider's path
+ * prefix (for example, Aliyun Token Plan's ".../compatible-mode/v1") is also
+ * accepted without duplicating that prefix.
  */
 function buildProviderUpstreamUrl(
   providerConfig: ResolvedProviderConfig,
   endpointPath: string,
 ): string {
   const prefix = getProviderApiPathPrefix(providerConfig.type)
-  return `${providerConfig.baseUrl}${prefix}${endpointPath}`
+  const baseUrl = providerConfig.baseUrl.replace(/\/+$/u, "")
+  const hasPrefix = prefix.length > 0 && baseUrl.endsWith(prefix)
+  return `${baseUrl}${hasPrefix ? "" : prefix}${endpointPath}`
 }
 
 const ANTHROPIC_FORWARDABLE_HEADERS = [
