@@ -1,29 +1,10 @@
 import { builtinProviderModelRegistry } from "~/lib/builtin-provider-models"
-import type {
-  CodexReasoningEffort,
-  ModelConfig,
-  ResolvedProviderConfig,
-} from "~/lib/config"
-import type { Reasoning, ResponsesPayload } from "~/lib/types/responses"
-
-type ResponsesReasoningEffort = Exclude<Reasoning["effort"], null | undefined>
-
-const RESPONSES_REASONING_EFFORTS = new Set<ResponsesReasoningEffort>([
-  "none",
-  "minimal",
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-  "max",
-])
-
-const REASONING_EFFORT_ALIASES: Record<string, ResponsesReasoningEffort> = {
-  minimal: "low",
-  xhigh: "high",
-  max: "high",
-  ultra: "high",
-}
+import type { ModelConfig, ResolvedProviderConfig } from "~/lib/config"
+import {
+  resolveSupportedReasoningEffort,
+  type ResponsesReasoningEffort,
+} from "~/lib/reasoning-effort"
+import type { ResponsesPayload } from "~/lib/types/responses"
 
 interface SamplingPayload {
   temperature?: number | null
@@ -54,65 +35,31 @@ export const applyMissingExtraBody = (
 export const normalizeProviderResponsesReasoningEffort = (
   payload: ResponsesPayload,
   providerConfig: ResolvedProviderConfig,
-): void => {
-  const currentEffort = payload.reasoning?.effort
-  if (typeof currentEffort !== "string") return
+): { from: string; to: ResponsesReasoningEffort } | undefined => {
+  if (!payload.reasoning || typeof payload.reasoning.effort !== "string") {
+    return undefined
+  }
 
   const modelConfig = providerConfig.models?.[payload.model]
   const builtinModelConfig = builtinProviderModelRegistry.getModelConfig(
     providerConfig.name,
     payload.model,
   )
-  const configuredEfforts = normalizeResponsesReasoningEfforts(
-    modelConfig?.reasoningEfforts,
-  )
-  const builtinEfforts = normalizeResponsesReasoningEfforts(
-    builtinModelConfig?.reasoningEfforts,
-  )
+  const configuredEfforts = modelConfig?.reasoningEfforts
   const supportedEfforts =
-    configuredEfforts.length > 0 ? configuredEfforts : builtinEfforts
+    configuredEfforts && configuredEfforts.length > 0 ?
+      configuredEfforts
+    : builtinModelConfig?.reasoningEfforts
 
-  if (
-    supportedEfforts.length === 0
-    || supportedEfforts.includes(currentEffort as ResponsesReasoningEffort)
-  ) {
-    return
-  }
-
-  const aliasedEffort = REASONING_EFFORT_ALIASES[currentEffort]
-  const fallbackEffort =
-    aliasedEffort && supportedEfforts.includes(aliasedEffort) ?
-      aliasedEffort
-    : selectSupportedReasoningEffort(
-        supportedEfforts,
-        modelConfig?.defaultReasoningEffort,
-        builtinModelConfig?.defaultReasoningEffort,
-      )
-
-  if (payload.reasoning && fallbackEffort) {
-    payload.reasoning.effort = fallbackEffort
-  }
-}
-
-const normalizeResponsesReasoningEfforts = (
-  efforts: Array<CodexReasoningEffort> | undefined,
-): Array<ResponsesReasoningEffort> =>
-  (efforts ?? []).filter((effort): effort is ResponsesReasoningEffort =>
-    RESPONSES_REASONING_EFFORTS.has(effort as ResponsesReasoningEffort),
+  const resolvedEffort = resolveSupportedReasoningEffort(
+    payload.reasoning.effort,
+    supportedEfforts,
   )
-
-const selectSupportedReasoningEffort = (
-  supportedEfforts: Array<ResponsesReasoningEffort>,
-  ...defaults: Array<CodexReasoningEffort | undefined>
-): ResponsesReasoningEffort | undefined => {
-  for (const defaultEffort of defaults) {
-    if (
-      defaultEffort
-      && supportedEfforts.includes(defaultEffort as ResponsesReasoningEffort)
-    ) {
-      return defaultEffort as ResponsesReasoningEffort
-    }
+  if (!resolvedEffort || resolvedEffort === payload.reasoning.effort) {
+    return undefined
   }
 
-  return supportedEfforts[0]
+  const requestedEffort = payload.reasoning.effort
+  payload.reasoning.effort = resolvedEffort
+  return { from: requestedEffort, to: resolvedEffort }
 }

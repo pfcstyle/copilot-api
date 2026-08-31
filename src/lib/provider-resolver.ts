@@ -3,6 +3,10 @@ import {
   getProviderConfig,
   type ResolvedProviderConfig,
 } from "~/lib/config"
+import {
+  parseProviderModelAlias,
+  type ProviderModelAlias,
+} from "~/lib/provider-model"
 import { state } from "~/lib/state"
 import { setupCodexToken } from "~/lib/token"
 
@@ -49,4 +53,35 @@ export async function resolveProviderConfig(
   }
 
   return getProviderConfig(normalizedProviderName)
+}
+
+export type ProviderConfigResolver = typeof resolveProviderConfig
+
+/**
+ * Returns the parsed "provider/model" alias only when that provider is
+ * actually configured, otherwise null so the caller falls through to its
+ * default flow. GitHub Copilot enterprise models can ship with namespaced ids
+ * such as "org/family/model": without this check the first segment is
+ * misrouted to a non-existent provider and surfaced as a 400/404.
+ */
+export async function ensureConfiguredProviderModelAlias(
+  alias: ProviderModelAlias | null,
+  resolveConfig: ProviderConfigResolver = resolveProviderConfig,
+): Promise<ProviderModelAlias | null> {
+  if (!alias) {
+    return null
+  }
+
+  return (await resolveConfig(alias.provider)) ? alias : null
+}
+
+/** parseProviderModelAlias + ensureConfiguredProviderModelAlias. */
+export async function resolveConfiguredProviderModelAlias(
+  model: string,
+  resolveConfig: ProviderConfigResolver = resolveProviderConfig,
+): Promise<ProviderModelAlias | null> {
+  return ensureConfiguredProviderModelAlias(
+    parseProviderModelAlias(model),
+    resolveConfig,
+  )
 }

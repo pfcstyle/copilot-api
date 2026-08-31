@@ -7,10 +7,8 @@ import {
   getClaudeTokenMultiplier,
   resolveMappedModel,
 } from "~/lib/config"
-import {
-  createFallbackModel,
-  parseProviderModelAlias,
-} from "~/lib/provider-model"
+import { createFallbackModel } from "~/lib/provider-model"
+import { resolveConfiguredProviderModelAlias } from "~/lib/provider-resolver"
 import { getTokenCount } from "~/lib/tokenizer"
 import { handleProviderCountTokensForProvider } from "~/routes/provider/messages/count-tokens-handler"
 import { type Model } from "~/lib/types/models"
@@ -95,7 +93,9 @@ export async function handleCountTokens(c: Context) {
   anthropicPayload.model = resolveMappedModel(anthropicPayload.model)
   normalizeSystemMessages(anthropicPayload)
 
-  const providerModelAlias = parseProviderModelAlias(anthropicPayload.model)
+  const providerModelAlias = await resolveConfiguredProviderModelAlias(
+    anthropicPayload.model,
+  )
   if (providerModelAlias) {
     anthropicPayload.model = providerModelAlias.model
     return await handleProviderCountTokensForProvider(c, {

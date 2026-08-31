@@ -28,7 +28,10 @@ const noopTokenUsageRecorder = () => {}
 
 await mock.module("~/lib/config", () => ({
   ...actualConfigModule,
-  getProviderConfig: () => providerConfig,
+  getProviderConfig: (name: string) =>
+    providerConfig && name === providerConfig.name ? providerConfig : null,
+  getRawProviderConfig: (name: string) =>
+    providerConfig && name === providerConfig.name ? providerConfig : null,
   resolveMappedModel: (model: string) => modelMappings[model] ?? model,
 }))
 
@@ -275,5 +278,87 @@ describe("provider/model aliases on top-level messages routes", () => {
         type: "error",
       },
     })
+  })
+})
+
+describe("namespaced model ids fall through to the default lookup", () => {
+  // Regression guard for namespaced model ids returned by the GitHub Copilot
+  // gateway for enterprise accounts. The gateway lists enterprise-configured
+  // models with the account handle as a prefix, e.g. "contoso/glm-5.2" or a
+  // deeper org-scoped "contoso/family/glm-5.2". parseProviderModelAlias
+  // previously treated the first segment ("contoso") as a custom provider
+  // alias prefix, but no "contoso" entry exists in config.providers, so the
+  // request was misrouted to the provider path and surfaced as a 400/404.
+  // These ids must fall through to the default model lookup (Copilot
+  // upstream) and be sent as-is, exactly like a plain model id.
+  test("does not route a namespaced /v1/messages id to the provider path", async () => {
+    // Single-segment namespacing: "contoso/glm-5.2".
+    const app = createApp()
+    const response = await app.request("/v1/messages", {
+      body: JSON.stringify({
+        max_tokens: 128,
+        messages: [{ content: "hello", role: "user" }],
+        model: "contoso/glm-5.2",
+      }),
+      headers: {
+        "content-type": "application/json",
+      },
+      method: "POST",
+    })
+
+    // Negative: the request was never sent to the configured "dash" provider
+    // and the provider 400 wording is absent (it reached the default flow,
+    // which errors out upstream without a Copilot token, not at the provider).
+    expect(fetchMock).not.toHaveBeenCalled()
+    const body = (await response.json()) as { error?: { message?: string } }
+    expect(body.error?.message).not.toContain("does not support")
+  })
+
+  test("does not route a namespaced /v1/messages/count_tokens id to the provider path and reaches the estimation fallback", async () => {
+    // Multi-segment namespacing: "contoso/family/glm-5.2". count_tokens is
+    // called as a preflight by clients like Claude Code; it must not 404 on
+    // a namespaced id while the main /v1/messages flow works.
+    const app = createApp()
+    const response = await app.request("/v1/messages/count_tokens", {
+      body: JSON.stringify({
+        max_tokens: 128,
+        messages: [{ content: "hello", role: "user" }],
+        model: "contoso/family/glm-5.2",
+      }),
+      headers: {
+        "content-type": "application/json",
+      },
+      method: "POST",
+    })
+
+    expect(getTokenCount).toHaveBeenCalledTimes(1)
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({ input_tokens: 42 })
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  test("still routes a configured provider alias on /v1/messages/count_tokens to the provider path", async () => {
+    // Regression guard for the happy path: a real provider alias must still
+    // be routed to the provider token counter (not fall through).
+    const app = createApp()
+    const response = await app.request("/v1/messages/count_tokens", {
+      body: JSON.stringify({
+        max_tokens: 128,
+        messages: [{ content: "hello", role: "user" }],
+        model: "dash/qwen-plus",
+      }),
+      headers: {
+        "content-type": "application/json",
+      },
+      method: "POST",
+    })
+
+    expect(response.status).toBe(200)
+    expect(getTokenCount).toHaveBeenCalledTimes(1)
+    const [, selectedModel] = getTokenCount.mock.calls[0] as [
+      TokenCountPayload,
+      TokenCountModel,
+    ]
+    expect(selectedModel.id).toBe("qwen-plus")
   })
 })

@@ -407,12 +407,12 @@
               />
             </div>
             <div>
-              <label for="x-api-key" class="field-label">x-api-key</label>
+              <label for="x-api-key" class="field-label">Auth credential</label>
               <input
                 type="password"
                 id="x-api-key"
                 class="input-control input-focus"
-                placeholder="Optional when auth is enabled"
+                placeholder="x-api-key or Authorization Bearer"
                 autocomplete="off"
                 spellcheck="false"
               />
@@ -433,6 +433,9 @@
               <span>Refresh</span>
             </button>
           </form>
+          <p class="mt-2 text-xs" style="color: var(--color-gray);">
+            Credentials are remembered per endpoint origin and are not sent to other endpoints.
+          </p>
         </header>
 
         <main id="content-area" class="content-area"></main>
@@ -464,7 +467,8 @@
         const DEFAULT_TOKEN_USAGE_EVENTS_PAGE_SIZE = 20;
         const ALL_METRICS_VALUE = "__all__";
         const ALL_MODELS_VALUE = "__all__";
-        const API_KEY_STORAGE_KEY = "copilot-api.usage-viewer.x-api-key";
+        const LEGACY_API_KEY_STORAGE_KEY = "copilot-api.usage-viewer.x-api-key";
+        const CREDENTIAL_STORAGE_PREFIX = "copilot-api.usage-viewer.credential.";
         const VALID_PERIODS = new Set(["day", "week", "month"]);
         const EMPTY_TOKEN_USAGE_TOTALS = {
           cache_creation_input_tokens: 0,
@@ -545,33 +549,156 @@
           return normalized;
         }
 
-        function loadStoredApiKey() {
+        function getEndpointOrigin(endpoint) {
+          if (!endpoint) {
+            return "";
+          }
           try {
-            return localStorage.getItem(API_KEY_STORAGE_KEY) || "";
+            return new URL(endpoint, window.location.href).origin;
           } catch (error) {
-            console.warn("Could not read stored API key:", getErrorMessage(error));
+            console.warn("Could not parse endpoint URL:", getErrorMessage(error));
             return "";
           }
         }
 
-        function storeApiKey(value) {
-          try {
-            const trimmed = value.trim();
-            if (trimmed) {
-              localStorage.setItem(API_KEY_STORAGE_KEY, trimmed);
-            } else {
-              localStorage.removeItem(API_KEY_STORAGE_KEY);
-            }
-          } catch (error) {
-            console.warn("Could not store API key:", getErrorMessage(error));
+        function getCredentialStorageKey(endpoint) {
+          const origin = getEndpointOrigin(endpoint);
+          return origin ? `${CREDENTIAL_STORAGE_PREFIX}${origin}` : "";
+        }
+
+        function readStoredApiKey(endpoint) {
+          const storageKey = getCredentialStorageKey(endpoint);
+          if (!storageKey) {
+            return "";
           }
+          try {
+            return window.localStorage.getItem(storageKey) || "";
+          } catch (error) {
+            console.warn(
+              "Could not read stored credential:",
+              getErrorMessage(error)
+            );
+            return "";
+          }
+        }
+
+        function writeStoredApiKey(endpoint, value) {
+          const storageKey = getCredentialStorageKey(endpoint);
+          if (!storageKey) {
+            return;
+          }
+          try {
+            window.localStorage.setItem(storageKey, value);
+          } catch (error) {
+            console.warn(
+              "Could not store credential:",
+              getErrorMessage(error)
+            );
+          }
+        }
+
+        function removeStoredApiKey(endpoint) {
+          const storageKey = getCredentialStorageKey(endpoint);
+          if (!storageKey) {
+            return;
+          }
+          try {
+            window.localStorage.removeItem(storageKey);
+          } catch (error) {
+            console.warn(
+              "Could not remove stored credential:",
+              getErrorMessage(error)
+            );
+          }
+        }
+
+        function removeLegacyStoredApiKey() {
+          try {
+            window.localStorage.removeItem(LEGACY_API_KEY_STORAGE_KEY);
+          } catch (error) {
+            console.warn(
+              "Could not remove legacy credential:",
+              getErrorMessage(error)
+            );
+          }
+        }
+
+        function migrateLegacyApiKey(endpoint) {
+          const storageKey = getCredentialStorageKey(endpoint);
+          if (storageKey && getEndpointOrigin(endpoint) === window.location.origin) {
+            try {
+              const legacyValue = window.localStorage.getItem(
+                LEGACY_API_KEY_STORAGE_KEY
+              );
+              if (legacyValue && !window.localStorage.getItem(storageKey)) {
+                window.localStorage.setItem(storageKey, legacyValue);
+              }
+            } catch (error) {
+              console.warn(
+                "Could not migrate legacy credential:",
+                getErrorMessage(error)
+              );
+            }
+          }
+          removeLegacyStoredApiKey();
+        }
+
+        function loadStoredApiKey(endpoint) {
+          return readStoredApiKey(endpoint);
+        }
+
+        function storeApiKey(value, endpoint) {
+          const trimmed = value.trim();
+          if (trimmed) {
+            writeStoredApiKey(endpoint, trimmed);
+          } else {
+            removeStoredApiKey(endpoint);
+          }
+        }
+
+        function parseCredential(value) {
+          const trimmed = value.trim();
+          if (!trimmed) {
+            return null;
+          }
+
+          const authorizationMatch = trimmed.match(
+            /^authorization\s*:\s*bearer\s+(.+)$/i
+          );
+          if (authorizationMatch) {
+            return {
+              header: "authorization",
+              value: `Bearer ${authorizationMatch[1].trim()}`,
+            };
+          }
+
+          const bearerMatch = trimmed.match(/^bearer\s+(.+)$/i);
+          if (bearerMatch) {
+            return {
+              header: "authorization",
+              value: `Bearer ${bearerMatch[1].trim()}`,
+            };
+          }
+
+          const xApiKeyMatch = trimmed.match(/^x-api-key\s*:\s*(.+)$/i);
+          if (xApiKeyMatch) {
+            return {
+              header: "x-api-key",
+              value: xApiKeyMatch[1].trim(),
+            };
+          }
+
+          return {
+            header: "x-api-key",
+            value: trimmed,
+          };
         }
 
         function buildRequestHeaders() {
           const headers = {};
-          const apiKey = apiKeyInput.value.trim();
-          if (apiKey) {
-            headers["x-api-key"] = apiKey;
+          const credential = parseCredential(apiKeyInput.value);
+          if (credential) {
+            headers[credential.header] = credential.value;
           }
           return headers;
         }
@@ -2001,7 +2128,8 @@
          */
         function handleFormSubmit(event) {
           event.preventDefault();
-          storeApiKey(apiKeyInput.value);
+          syncEndpointCredential();
+          storeApiKey(apiKeyInput.value, endpointUrlInput.value.trim());
           syncUrlState();
           void fetchData();
         }
@@ -2074,6 +2202,18 @@
           render();
         }
 
+        let currentEndpointOrigin = "";
+
+        function syncEndpointCredential() {
+          const endpoint = endpointUrlInput.value.trim();
+          const endpointOrigin = getEndpointOrigin(endpoint);
+          if (endpointOrigin === currentEndpointOrigin) {
+            return;
+          }
+          apiKeyInput.value = loadStoredApiKey(endpoint);
+          currentEndpointOrigin = endpointOrigin;
+        }
+
         /**
          * Initializes the application.
          */
@@ -2081,25 +2221,29 @@
           endpointForm.addEventListener("submit", handleFormSubmit);
           tokenUsagePeriodSelect.addEventListener("change", handlePeriodChange);
           apiKeyInput.addEventListener("input", () => {
-            storeApiKey(apiKeyInput.value);
+            storeApiKey(
+              apiKeyInput.value,
+              endpointUrlInput.value.trim()
+            );
           });
+          endpointUrlInput.addEventListener("change", syncEndpointCredential);
           contentArea.addEventListener("click", handleContentAreaClick);
           contentArea.addEventListener("change", handleContentAreaChange);
-
-          apiKeyInput.value = loadStoredApiKey();
 
           const urlParams = new URLSearchParams(window.location.search);
           const periodFromUrl = normalizePeriod(urlParams.get("period"));
           const endpointFromUrl = urlParams.get("endpoint");
+          const initialEndpoint = endpointFromUrl || DEFAULT_ENDPOINT;
 
           state.tokenUsagePeriod = periodFromUrl;
           tokenUsagePeriodSelect.value = periodFromUrl;
+          endpointUrlInput.value = initialEndpoint;
+          migrateLegacyApiKey(initialEndpoint);
+          syncEndpointCredential();
 
           if (endpointFromUrl) {
-            endpointUrlInput.value = endpointFromUrl;
             void fetchData();
           } else {
-            endpointUrlInput.value = DEFAULT_ENDPOINT;
             render();
           }
         }

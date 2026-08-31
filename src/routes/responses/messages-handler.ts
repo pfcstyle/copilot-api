@@ -8,6 +8,7 @@ import type { SubagentMarker } from "~/lib/subagent"
 import type { AnthropicResponse } from "~/lib/types/anthropic"
 import type { ResponsesPayload } from "~/lib/types/responses"
 import { handleCompletionPayload } from "~/routes/messages/handler"
+import { shouldInjectMessagesToolCallTips } from "~/routes/models/codex-models"
 
 import {
   responsesResultToStreamEvents,
@@ -43,6 +44,10 @@ export async function handleResponsesViaMessages(
       {
         model: options.targetModel,
         publicModel: options.publicModel,
+        toolCallTips: shouldInjectMessagesToolCallTips(
+          c.req.header("user-agent"),
+          options.targetModel,
+        ),
       },
     )
     const context: MessagesResponseTranslationContext = translation
@@ -51,6 +56,7 @@ export async function handleResponsesViaMessages(
       payload: translation.messagesPayload,
       publicModel: options.publicModel,
       targetModel: options.targetModel,
+      userAgent: c.req.header("user-agent") ?? "",
     })
 
     const messagesResponse =

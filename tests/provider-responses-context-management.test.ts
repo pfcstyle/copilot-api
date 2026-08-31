@@ -317,6 +317,32 @@ describe("provider Responses context management", () => {
     expect(body.reasoning?.effort).toBe("high")
   })
 
+  for (const effort of ["none", "low", "max", "turbo"] as const) {
+    test(`preserves ${effort} when provider capabilities are unknown`, async () => {
+      const app = createApp()
+      const response = await app.request("/openai/v1/responses", {
+        body: JSON.stringify({
+          input: "hello",
+          model: "gpt-test",
+          reasoning: { effort },
+        }),
+        headers: {
+          "content-type": "application/json",
+        },
+        method: "POST",
+      })
+
+      expect(response.status).toBe(200)
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+
+      const [, init] = fetchMock.mock.calls[0]
+      const body = parseJsonRequestBody((init as RequestInit).body) as {
+        reasoning?: { effort?: string }
+      }
+      expect(body.reasoning?.effort).toBe(effort)
+    })
+  }
+
   test("disables context management for gpt-5.6 models even when responses is enabled", async () => {
     responsesUtilsDependencies.isContextManagementEnabledForResponses = () =>
       true

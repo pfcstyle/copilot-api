@@ -154,7 +154,7 @@ describe('desktop provider auth', () => {
     })
   })
 
-  test('configures kimi with a fixed openai-compatible provider type', () => {
+  test('configures kimi with an editable provider type', () => {
     let writtenProviderConfig: ProviderConfig | undefined
 
     configureDesktopProvider(
@@ -162,7 +162,7 @@ describe('desktop provider auth', () => {
         apiKey: 'kimi-key',
         baseUrl: 'https://kimi.example/coding///',
         provider: 'kimi',
-        type: 'anthropic',
+        type: 'openai-compatible',
       },
       {
         getEnabledProviders: () => ['kimi'],

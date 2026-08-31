@@ -1,5 +1,6 @@
 import type {
   ResponseContextManagementCompactionItem,
+  ResponseCustomToolCallOutputItem,
   ResponseFunctionCallOutputItem,
   ResponseInputContent,
   ResponseInputImage,
@@ -17,11 +18,36 @@ import {
   isGpt56OrAbove,
   isResponsesApiWebSocketEnabled as isConfiguredResponsesApiWebSocketEnabled,
 } from "~/lib/config"
+import {
+  resolveSupportedReasoningEffort,
+  type ResponsesReasoningEffort,
+} from "~/lib/reasoning-effort"
 
 export const RESPONSES_ENDPOINT = "/responses"
 export const RESPONSES_WS_ENDPOINT = "ws:/responses"
 export const DEFAULT_RESPONSES_COMPACT_THRESHOLD_RATIO = 0.85
 export type ResponsesApiContextManagementSource = "messages" | "responses"
+
+export const normalizeResponsesReasoningEffort = (
+  payload: ResponsesPayload,
+  supportedEfforts: Array<string> | undefined,
+): { from: string; to: ResponsesReasoningEffort } | undefined => {
+  if (!payload.reasoning || typeof payload.reasoning.effort !== "string") {
+    return undefined
+  }
+
+  const resolvedEffort = resolveSupportedReasoningEffort(
+    payload.reasoning.effort,
+    supportedEfforts,
+  )
+  if (!resolvedEffort || resolvedEffort === payload.reasoning.effort) {
+    return undefined
+  }
+
+  const requestedEffort = payload.reasoning.effort
+  payload.reasoning.effort = resolvedEffort
+  return { from: requestedEffort, to: resolvedEffort }
+}
 
 export const responsesUtilsDependencies = {
   getModelResponsesApiCompactThreshold:
@@ -182,17 +208,21 @@ export const normalizeInputImageDetails = (
     return 0
   }
 
-  let count = 0
+  let normalizedCount = 0
   for (const image of collectInputImages(payload.input)) {
-    if (image.detail === "low" || image.detail === "high") {
+    if (
+      image.detail === undefined
+      || image.detail === "low"
+      || image.detail === "high"
+    ) {
       continue
     }
 
     image.detail = "low"
-    count += 1
+    normalizedCount += 1
   }
 
-  return count
+  return normalizedCount
 }
 
 interface InputImageDataUrl {
@@ -205,7 +235,12 @@ const sanitizeInputImages = (
   shouldReplace: (image: InputImageDataUrl) => boolean,
 ): number => {
   let count = 0
-  for (const image of collectInputImageDataUrls(input)) {
+  for (const record of collectInputImages(input)) {
+    const image = getInputImageDataUrl(record)
+    if (!image) {
+      continue
+    }
+
     if (!shouldReplace(image)) {
       continue
     }
@@ -217,47 +252,19 @@ const sanitizeInputImages = (
   return count
 }
 
-const collectInputImageDataUrls = (
-  input: Array<ResponseInputItem>,
-  images: Array<InputImageDataUrl> = [],
-): Array<InputImageDataUrl> => {
-  for (const image of collectInputImages(input)) {
-    if (
-      typeof image.image_url !== "string"
-      || !image.image_url.startsWith(DATA_URL_PREFIX)
-    ) {
-      continue
-    }
-
-    images.push({
-      decodedBytes: estimateDataUrlByteLength(image.image_url),
-      record: image,
-    })
-  }
-
-  return images
-}
-
 const collectInputImages = (
   input: Array<ResponseInputItem>,
   images: Array<ResponseInputImage> = [],
 ): Array<ResponseInputImage> => {
   for (const item of input) {
-    collectInputItemImages(item, images)
+    if (isResponseInputMessage(item)) {
+      collectContentImages(item.content, images)
+    } else if (isResponseFunctionCallOutputItem(item)) {
+      collectContentImages(item.output, images)
+    }
   }
 
   return images
-}
-
-const collectInputItemImages = (
-  item: ResponseInputItem,
-  images: Array<ResponseInputImage>,
-): void => {
-  if (isResponseInputMessage(item)) {
-    collectContentImages(item.content, images)
-  } else if (isResponseFunctionCallOutputItem(item)) {
-    collectContentImages(item.output, images)
-  }
 }
 
 const collectContentImages = (
@@ -269,16 +276,31 @@ const collectContentImages = (
   }
 
   for (const block of content) {
-    const image = getInputImage(block)
-    if (image) {
-      images.push(image)
+    if (isResponseInputImage(block)) {
+      images.push(block)
     }
   }
 }
 
-const getInputImage = (
-  content: ResponseInputContent,
-): ResponseInputImage | null => (isResponseInputImage(content) ? content : null)
+const getInputImageDataUrl = (
+  image: ResponseInputImage,
+): InputImageDataUrl | null => {
+  if (typeof image.image_url !== "string") {
+    return null
+  }
+
+  const imageUrl = image.image_url
+  if (!imageUrl.startsWith(DATA_URL_PREFIX)) {
+    return null
+  }
+
+  const decodedBytes = estimateDataUrlByteLength(imageUrl)
+
+  return {
+    decodedBytes,
+    record: image,
+  }
+}
 
 const estimateDataUrlByteLength = (value: string): number => {
   return Math.max(0, Math.floor((value.length * 3) / 4))
@@ -304,12 +326,15 @@ const isResponseInputMessage = (
 
 const isResponseFunctionCallOutputItem = (
   item: ResponseInputItem,
-): item is ResponseFunctionCallOutputItem => {
+): item is
+  | ResponseCustomToolCallOutputItem
+  | ResponseFunctionCallOutputItem => {
   return (
     typeof item === "object"
     && item !== null
     && "type" in item
-    && item.type === "function_call_output"
+    && (item.type === "custom_tool_call_output"
+      || item.type === "function_call_output")
   )
 }
 

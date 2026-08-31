@@ -45,6 +45,13 @@ const DEFAULT_REASONING_EFFORTS: Array<CodexReasoningEffort> = [
   "ultra",
 ]
 
+const addUltraReasoningEffort = (
+  efforts: Array<CodexReasoningEffort>,
+): Array<CodexReasoningEffort> => {
+  if (efforts.includes("ultra")) return efforts
+  return [...efforts, "ultra"]
+}
+
 // Codex clients sort models by the `priority` field. The group bases keep the
 // merged list ordered as: upstream catalog, codex provider aliases, copilot
 // models, opencode-go models, then models from other providers.
@@ -250,7 +257,7 @@ After deleting anything material, briefly tell the user what was removed and whe
   supports_parallel_tool_calls: true,
   supports_image_detail_original: true,
   context_window: 272_000,
-  max_context_window: 272_000,
+  max_context_window: 872_000,
   comp_hash: "3000",
   effective_context_window_percent: 95,
   experimental_supported_tools: [],
@@ -279,6 +286,17 @@ interface MergedCodexModelsOptions {
 
 export function isCodexUserAgent(userAgent: string | undefined): boolean {
   return CODEX_USER_AGENT_PATTERN.test(userAgent?.trim() ?? "")
+}
+
+export function isDeepSeekModelId(modelId: string): boolean {
+  return modelId.toLowerCase().includes("deepseek")
+}
+
+export function shouldInjectMessagesToolCallTips(
+  userAgent: string | undefined,
+  targetModel: string,
+): boolean {
+  return isCodexUserAgent(userAgent) && !isDeepSeekModelId(targetModel)
 }
 
 async function logCodexModelsResponse(response: Response): Promise<void> {
@@ -433,7 +451,7 @@ export function createSyntheticCodexModel(
 ): CodexModel {
   const reasoningEfforts =
     candidate.reasoningEfforts.length > 0 ?
-      candidate.reasoningEfforts
+      addUltraReasoningEffort(candidate.reasoningEfforts)
     : DEFAULT_REASONING_EFFORTS
   const defaultReasoningEffort =
     reasoningEfforts.includes(candidate.defaultReasoningEffort) ?
@@ -441,6 +459,7 @@ export function createSyntheticCodexModel(
     : reasoningEfforts[0]
   const supportsReasoning = reasoningEfforts.some((effort) => effort !== "none")
   const inputModalities = [...new Set(candidate.inputModalities)]
+  const isDeepSeekModel = isDeepSeekModelId(candidate.slug)
 
   return {
     ...template,
@@ -457,8 +476,8 @@ export function createSyntheticCodexModel(
     apply_patch_tool_type: "freeform",
     web_search_tool_type: "text_and_image",
     supports_search_tool: false,
-    use_responses_lite: true,
-    tool_mode: "code_mode_only",
+    use_responses_lite: isDeepSeekModel ? false : true,
+    tool_mode: isDeepSeekModel ? null : "code_mode_only",
     multi_agent_version: "v2",
     shell_type: "shell_command",
     experimental_supported_tools: [],

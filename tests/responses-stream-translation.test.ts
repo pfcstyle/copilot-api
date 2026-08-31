@@ -10,6 +10,8 @@ import type {
   ResponseReasoningSummaryPartAddedEvent,
   ResponseReasoningSummaryTextDeltaEvent,
   ResponseReasoningSummaryTextDoneEvent,
+  ResponseTextDeltaEvent,
+  ResponseTextDoneEvent,
 } from "~/lib/types/responses"
 
 import {
@@ -112,7 +114,7 @@ describe("translateResponsesStreamEvent tool calls", () => {
     expect(state.functionCallStateByOutputIndex.size).toBe(0)
   })
 
-  test("keeps parallel function call blocks open across interleaved deltas", () => {
+  test("closes the previous function call block when a new one starts", () => {
     const state = createResponsesStreamState()
 
     const events = [
@@ -127,33 +129,34 @@ describe("translateResponsesStreamEvent tool calls", () => {
         state,
       ),
       translateResponsesStreamEvent(
-        createFunctionCallAddedEvent({
-          callId: "call-2",
-          itemId: "item-2",
-          name: "SecondTool",
-          outputIndex: 1,
-          sequenceNumber: 2,
-        }),
-        state,
-      ),
-      translateResponsesStreamEvent(
         {
           type: "response.function_call_arguments.delta",
           item_id: "item-1",
           output_index: 0,
-          sequence_number: 3,
+          sequence_number: 2,
           delta: '{"value":1}',
         } satisfies ResponseFunctionCallArgumentsDeltaEvent,
         state,
       ),
       translateResponsesStreamEvent(
         {
-          type: "response.function_call_arguments.delta",
-          item_id: "item-2",
-          output_index: 1,
-          sequence_number: 4,
-          delta: '{"value":2}',
-        } satisfies ResponseFunctionCallArgumentsDeltaEvent,
+          type: "response.function_call_arguments.done",
+          item_id: "item-1",
+          name: "FirstTool",
+          output_index: 0,
+          sequence_number: 3,
+          arguments: '{"value":1}',
+        } satisfies ResponseFunctionCallArgumentsDoneEvent,
+        state,
+      ),
+      translateResponsesStreamEvent(
+        createFunctionCallAddedEvent({
+          callId: "call-2",
+          itemId: "item-2",
+          name: "SecondTool",
+          outputIndex: 1,
+          sequenceNumber: 4,
+        }),
         state,
       ),
       translateResponsesStreamEvent(
@@ -169,21 +172,119 @@ describe("translateResponsesStreamEvent tool calls", () => {
       ),
       translateResponsesStreamEvent(
         {
+          type: "response.completed",
+          sequence_number: 6,
+          response: {
+            id: "resp-sequential",
+            object: "response",
+            created_at: 0,
+            model: "gpt-5",
+            output: [],
+            output_text: "",
+            status: "completed",
+            usage: null,
+            error: null,
+            incomplete_details: null,
+            instructions: null,
+            metadata: null,
+            parallel_tool_calls: true,
+            temperature: null,
+            tool_choice: null,
+            tools: [],
+            top_p: null,
+          },
+        } as ResponseCompletedEvent,
+        state,
+      ),
+    ].flat()
+
+    expect(
+      events.filter(
+        (event) =>
+          event.type === "content_block_start"
+          || event.type === "content_block_stop",
+      ),
+    ).toEqual([
+      {
+        type: "content_block_start",
+        index: 0,
+        content_block: {
+          type: "tool_use",
+          id: "call-1",
+          name: "FirstTool",
+          input: {},
+        },
+      },
+      { type: "content_block_stop", index: 0 },
+      {
+        type: "content_block_start",
+        index: 1,
+        content_block: {
+          type: "tool_use",
+          id: "call-2",
+          name: "SecondTool",
+          input: {},
+        },
+      },
+      { type: "content_block_stop", index: 1 },
+    ])
+    expect(state.openBlocks.size).toBe(0)
+    expect(state.functionCallStateByOutputIndex.size).toBe(0)
+  })
+
+  test("ignores output_text.done after a tool call", () => {
+    const state = createResponsesStreamState()
+
+    const events = [
+      translateResponsesStreamEvent(
+        {
+          type: "response.output_text.delta",
+          item_id: "msg-1",
+          output_index: 0,
+          content_index: 0,
+          sequence_number: 1,
+          delta: "Hello",
+        } satisfies ResponseTextDeltaEvent,
+        state,
+      ),
+      translateResponsesStreamEvent(
+        createFunctionCallAddedEvent({
+          callId: "call-1",
+          itemId: "item-1",
+          name: "FirstTool",
+          outputIndex: 1,
+          sequenceNumber: 2,
+        }),
+        state,
+      ),
+      translateResponsesStreamEvent(
+        {
           type: "response.function_call_arguments.done",
           item_id: "item-1",
           name: "FirstTool",
-          output_index: 0,
-          sequence_number: 6,
+          output_index: 1,
+          sequence_number: 3,
           arguments: '{"value":1}',
         } satisfies ResponseFunctionCallArgumentsDoneEvent,
         state,
       ),
       translateResponsesStreamEvent(
         {
+          type: "response.output_text.done",
+          item_id: "msg-1",
+          output_index: 0,
+          content_index: 0,
+          sequence_number: 4,
+          text: "Hello",
+        } satisfies ResponseTextDoneEvent,
+        state,
+      ),
+      translateResponsesStreamEvent(
+        {
           type: "response.completed",
-          sequence_number: 7,
+          sequence_number: 5,
           response: {
-            id: "resp-parallel",
+            id: "resp-late-text-done",
             object: "response",
             created_at: 0,
             model: "grok-4.5",
@@ -213,10 +314,8 @@ describe("translateResponsesStreamEvent tool calls", () => {
         type: "content_block_start",
         index: 0,
         content_block: {
-          type: "tool_use",
-          id: "call-1",
-          name: "FirstTool",
-          input: {},
+          type: "text",
+          text: "",
         },
       },
       {
@@ -224,29 +323,25 @@ describe("translateResponsesStreamEvent tool calls", () => {
         index: 1,
         content_block: {
           type: "tool_use",
-          id: "call-2",
-          name: "SecondTool",
+          id: "call-1",
+          name: "FirstTool",
           input: {},
         },
       },
     ])
     expect(
-      events.filter((event) => event.type === "content_block_delta"),
+      events.filter(
+        (event) =>
+          event.type === "content_block_delta"
+          && event.delta.type === "text_delta",
+      ),
     ).toEqual([
       {
         type: "content_block_delta",
         index: 0,
         delta: {
-          type: "input_json_delta",
-          partial_json: '{"value":1}',
-        },
-      },
-      {
-        type: "content_block_delta",
-        index: 1,
-        delta: {
-          type: "input_json_delta",
-          partial_json: '{"value":2}',
+          type: "text_delta",
+          text: "Hello",
         },
       },
     ])
@@ -257,7 +352,6 @@ describe("translateResponsesStreamEvent tool calls", () => {
       { type: "content_block_stop", index: 1 },
     ])
     expect(state.openBlocks.size).toBe(0)
-    expect(state.functionCallStateByOutputIndex.size).toBe(0)
   })
 
   test("emits full arguments when only done payload is present", () => {

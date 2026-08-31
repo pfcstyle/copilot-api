@@ -1,10 +1,13 @@
 {
   "name": "copilot-api-desktop",
-  "version": "2.2.5",
+  "version": "2.3.9",
   "description": "Copilot API Desktop App",
   "author": "jeffreycao",
   "desktopName": "copilot-api.desktop",
   "main": "out/main/index.js",
+  "trustedDependencies": [
+    "electron"
+  ],
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
@@ -102,7 +105,7 @@
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
-    "electron": "^39.8.6",
+    "electron": "^43.4.1",
     "electron-builder": "^26.8.1",
     "electron-vite": "^3.1.0",
     "eslint": "^9.37.0",

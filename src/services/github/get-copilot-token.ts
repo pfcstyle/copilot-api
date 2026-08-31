@@ -23,8 +23,16 @@ export const getCopilotToken = async () => {
 }
 
 // Trimmed for the sake of simplicity
-interface GetCopilotTokenResponse {
+export interface GetCopilotTokenResponse {
   expires_at: number
   refresh_in: number
   token: string
+  // Per-SKU isolated endpoints returned by the token exchange. This is the
+  // authoritative routing source for the issued token; `/copilot_internal/user`
+  // may advertise a different segmented host (e.g. business vs enterprise).
+  endpoints?: {
+    api?: string
+    proxy?: string
+    telemetry?: string
+  }
 }

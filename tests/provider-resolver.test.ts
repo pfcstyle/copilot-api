@@ -4,6 +4,12 @@ import os from "node:os"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
+import type { ResolvedProviderConfig } from "~/lib/config"
+import {
+  ensureConfiguredProviderModelAlias,
+  resolveConfiguredProviderModelAlias,
+} from "~/lib/provider-resolver"
+
 interface CodexCredentialsShape {
   accessToken: string
   accountId: string
@@ -190,5 +196,50 @@ describe("provider resolver", () => {
       authType: "oauth2",
       baseUrl: "https://chatgpt.com/backend-api",
     })
+  })
+})
+
+describe("configured provider/model alias helpers", () => {
+  const configuredResolver = () => Promise.resolve({} as ResolvedProviderConfig)
+  const missingResolver = () => Promise.resolve(null)
+
+  test("returns null without calling the resolver for plain model ids", async () => {
+    let calls = 0
+    const countingResolver = (_providerName: string) => {
+      calls += 1
+      return Promise.resolve(null)
+    }
+
+    expect(
+      await resolveConfiguredProviderModelAlias("gpt-5-mini", countingResolver),
+    ).toBeNull()
+    expect(
+      await ensureConfiguredProviderModelAlias(null, countingResolver),
+    ).toBeNull()
+    expect(calls).toBe(0)
+  })
+
+  test("returns the alias when the provider is configured", async () => {
+    expect(
+      await resolveConfiguredProviderModelAlias(
+        "dash/qwen-plus",
+        configuredResolver,
+      ),
+    ).toEqual({ provider: "dash", model: "qwen-plus" })
+  })
+
+  test("returns null when the provider is not configured", async () => {
+    expect(
+      await resolveConfiguredProviderModelAlias(
+        "contoso/glm-5.2",
+        missingResolver,
+      ),
+    ).toBeNull()
+    expect(
+      await ensureConfiguredProviderModelAlias(
+        { provider: "contoso", model: "family/glm-5.2" },
+        missingResolver,
+      ),
+    ).toBeNull()
   })
 })

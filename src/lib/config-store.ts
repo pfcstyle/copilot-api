@@ -206,19 +206,25 @@ function ensureConfigFile(): void {
 
 function readConfigFromDisk(): AppConfig {
   ensureConfigFile()
+  const raw = fs.readFileSync(PATHS.CONFIG_PATH, "utf8")
+  if (!raw.trim()) {
+    writeFileAtomically(
+      PATHS.CONFIG_PATH,
+      `${JSON.stringify(defaultConfig, null, 2)}\n`,
+    )
+    return defaultConfig
+  }
+
   try {
-    const raw = fs.readFileSync(PATHS.CONFIG_PATH, "utf8")
-    if (!raw.trim()) {
-      writeFileAtomically(
-        PATHS.CONFIG_PATH,
-        `${JSON.stringify(defaultConfig, null, 2)}\n`,
-      )
-      return defaultConfig
-    }
     return JSON.parse(raw) as AppConfig
   } catch (error) {
-    consola.error("Failed to read config file, using default config", error)
-    return defaultConfig
+    // Fail closed: falling back to the default config here would let the
+    // startup merge overwrite the corrupt file (discarding providers, API
+    // keys, and model mappings) and, because the default has no apiKeys,
+    // silently disable API key authentication on normal routes.
+    const message = `Config file is not valid JSON: ${PATHS.CONFIG_PATH}. Refusing to start with the default config. Fix the JSON syntax or delete the file to regenerate a fresh config.`
+    consola.error(message, error)
+    throw new Error(message, { cause: error })
   }
 }
 

@@ -454,7 +454,7 @@ test("forwardCodexResponses emits an error event when the websocket closes witho
   expect(chunks).toHaveLength(1)
   expect(chunks[0]?.event).toBe("error")
   expect(chunks[0]?.data).toContain(
-    '"message":"Codex responses websocket ended without a terminal response"',
+    '"message":"Codex responses websocket ended without a terminal response, retry your request."',
   )
 })
 

@@ -747,6 +747,7 @@ describe("model routes", () => {
         { effort: "low", description: "low reasoning effort" },
         { effort: "medium", description: "medium reasoning effort" },
         { effort: "high", description: "high reasoning effort" },
+        { effort: "ultra", description: "ultra reasoning effort" },
       ],
     })
     expect(body.models.map((model) => model.slug)).not.toContain(
@@ -887,6 +888,40 @@ describe("model routes", () => {
         ],
       })
     }
+  })
+
+  test("adds ultra reasoning effort at the end when it is missing", async () => {
+    const copilotModels = createCopilotModels(["gpt-5.6-sol"])
+    copilotModels.data[0].supported_endpoints = ["/v1/messages"]
+    copilotModels.data[0].capabilities.supports.tool_calls = true
+    copilotModels.data[0].capabilities.supports.reasoning_effort = [
+      "low",
+      "medium",
+      "high",
+      "xhigh",
+    ]
+    state.models = copilotModels
+
+    const response = await createApp().request("/v1/models", {
+      headers: { "user-agent": "codex-cli/1.0.0" },
+    })
+
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as {
+      models: Array<Record<string, unknown> & { slug: string }>
+    }
+    expect(
+      body.models.find((model) => model.slug === "gpt-5.6-sol"),
+    ).toMatchObject({
+      default_reasoning_level: "low",
+      supported_reasoning_levels: [
+        { effort: "low", description: "low reasoning effort" },
+        { effort: "medium", description: "medium reasoning effort" },
+        { effort: "high", description: "high reasoning effort" },
+        { effort: "xhigh", description: "xhigh reasoning effort" },
+        { effort: "ultra", description: "ultra reasoning effort" },
+      ],
+    })
   })
 
   test("merges Anthropic and OpenAI-compatible provider models for Codex", async () => {

@@ -12,7 +12,10 @@ import { forwardError } from "~/lib/error"
 import { createHandlerLogger, debugJsonAsync } from "~/lib/logger"
 import { findEndpointModel } from "~/lib/models"
 import { parseProviderModelAlias } from "~/lib/provider-model"
-import { resolveProviderConfig } from "~/lib/provider-resolver"
+import {
+  ensureConfiguredProviderModelAlias,
+  resolveProviderConfig,
+} from "~/lib/provider-resolver"
 import type {
   AlphaSearchRequest,
   AlphaSearchResponse,
@@ -222,10 +225,17 @@ export async function handleAlphaSearchRequest(
     messagesBackedModel ? payload.model : requestedModel
 
   if (providerModelAlias) {
-    return await alphaSearchRouteDependencies.handleAlphaSearchResponses(c, {
-      provider: providerModelAlias.provider,
-      request: payload,
-    })
+    const configuredProviderModelAlias =
+      await ensureConfiguredProviderModelAlias(
+        providerModelAlias,
+        alphaSearchRouteDependencies.resolveProviderConfig,
+      )
+    if (configuredProviderModelAlias) {
+      return await alphaSearchRouteDependencies.handleAlphaSearchResponses(c, {
+        provider: providerModelAlias.provider,
+        request: payload,
+      })
+    }
   }
 
   return await alphaSearchRouteDependencies.handleAlphaSearchResponses(c, {

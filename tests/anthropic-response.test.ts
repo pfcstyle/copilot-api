@@ -290,6 +290,7 @@ describe("OpenAI to Anthropic Streaming Response Translation", () => {
 
     const streamState: AnthropicStreamState = {
       messageStartSent: false,
+      messageCompleted: false,
       contentBlockIndex: 0,
       contentBlockOpen: false,
       toolCalls: {},
@@ -391,6 +392,7 @@ describe("OpenAI to Anthropic Streaming Response Translation", () => {
     // Streaming translation requires state
     const streamState: AnthropicStreamState = {
       messageStartSent: false,
+      messageCompleted: false,
       contentBlockIndex: 0,
       contentBlockOpen: false,
       toolCalls: {},
@@ -508,6 +510,7 @@ describe("OpenAI stream interleaved tool/content translation", () => {
 
     const streamState: AnthropicStreamState = {
       messageStartSent: false,
+      messageCompleted: false,
       contentBlockIndex: 0,
       contentBlockOpen: false,
       toolCalls: {},
@@ -608,6 +611,7 @@ describe("OpenAI usage-only stream translation", () => {
 
     const streamState: AnthropicStreamState = {
       messageStartSent: false,
+      messageCompleted: false,
       contentBlockIndex: 0,
       contentBlockOpen: false,
       toolCalls: {},
@@ -702,6 +706,7 @@ describe("OpenAI usage-only stream translation", () => {
 
     const streamState: AnthropicStreamState = {
       messageStartSent: false,
+      messageCompleted: false,
       contentBlockIndex: 0,
       contentBlockOpen: false,
       toolCalls: {},
@@ -776,6 +781,7 @@ describe("OpenAI usage-only stream translation", () => {
 
     const streamState: AnthropicStreamState = {
       messageStartSent: false,
+      messageCompleted: false,
       contentBlockIndex: 0,
       contentBlockOpen: false,
       toolCalls: {},
@@ -802,5 +808,95 @@ describe("OpenAI usage-only stream translation", () => {
       },
     })
     expect(translatedStream.at(-1)).toEqual({ type: "message_stop" })
+  })
+
+  test("should mark the stream completed after finish_reason and flush", () => {
+    const openAIStream: Array<ChatCompletionChunk> = [
+      {
+        id: "cmpl-complete",
+        object: "chat.completion.chunk",
+        created: 1677652288,
+        model: "kimi-k3",
+        choices: [
+          {
+            index: 0,
+            delta: { content: "hi" },
+            finish_reason: null,
+            logprobs: null,
+          },
+        ],
+      },
+      {
+        id: "cmpl-complete",
+        object: "chat.completion.chunk",
+        created: 1677652288,
+        model: "kimi-k3",
+        choices: [
+          { index: 0, delta: {}, finish_reason: "stop", logprobs: null },
+        ],
+        usage: {
+          prompt_tokens: 3,
+          completion_tokens: 1,
+          total_tokens: 4,
+        },
+      },
+    ]
+
+    const streamState: AnthropicStreamState = {
+      messageStartSent: false,
+      messageCompleted: false,
+      contentBlockIndex: 0,
+      contentBlockOpen: false,
+      toolCalls: {},
+      thinkingBlockOpen: false,
+    }
+    const translatedStream = openAIStream.flatMap((chunk) =>
+      translateChunkToAnthropicEvents(chunk, streamState),
+    )
+    translatedStream.push(...flushPendingAnthropicStreamEvents(streamState))
+
+    expect(streamState.messageCompleted).toBe(true)
+    expect(translatedStream.at(-1)).toEqual({ type: "message_stop" })
+  })
+
+  test("should keep the stream incomplete when interrupted during thinking output", () => {
+    const openAIStream: Array<ChatCompletionChunk> = [
+      {
+        id: "cmpl-thinking-cut",
+        object: "chat.completion.chunk",
+        created: 1677652288,
+        model: "kimi-k3",
+        choices: [
+          {
+            index: 0,
+            delta: { reasoning_text: "partial thought" },
+            finish_reason: null,
+            logprobs: null,
+          },
+        ],
+      },
+      // The stream ends here: no finish_reason and no usage chunk arrive.
+    ]
+
+    const streamState: AnthropicStreamState = {
+      messageStartSent: false,
+      messageCompleted: false,
+      contentBlockIndex: 0,
+      contentBlockOpen: false,
+      toolCalls: {},
+      thinkingBlockOpen: false,
+    }
+    const translatedStream = openAIStream.flatMap((chunk) =>
+      translateChunkToAnthropicEvents(chunk, streamState),
+    )
+    const flushedEvents = flushPendingAnthropicStreamEvents(streamState)
+
+    // The thinking block was opened but the stream never finished.
+    expect(streamState.thinkingBlockOpen).toBe(true)
+    expect(streamState.messageCompleted).toBe(false)
+    expect(flushedEvents).toHaveLength(0)
+    expect(
+      translatedStream.some((event) => event.type === "message_stop"),
+    ).toBe(false)
   })
 })

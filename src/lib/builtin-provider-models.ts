@@ -82,17 +82,17 @@ export class BuiltinProviderModelRegistry {
         pricing: {
           tiers: [
             {
-              cacheCreationInput: 6.25,
-              cachedInput: 0.5,
-              input: 5,
+              cacheCreationInput: 5,
+              cachedInput: 0.4,
+              input: 4,
               maxInputTokens: 272_000,
-              output: 30,
+              output: 20,
             },
             {
-              cacheCreationInput: 12.5,
-              cachedInput: 1,
-              input: 10,
-              output: 45,
+              cacheCreationInput: 10,
+              cachedInput: 0.8,
+              input: 8,
+              output: 30,
             },
           ],
         },
@@ -250,9 +250,19 @@ export class BuiltinProviderModelRegistry {
         inputModalities: ["text"],
         maxOutputTokens: 64_000,
         pricing: {
-          cachedInput: 0.02,
-          input: 1,
-          output: 2,
+          cachedInput: 0.1,
+          input: 3,
+          output: 9,
+        },
+      },
+      "deepseek-v4-flash-vision-exp": {
+        contextWindow: 1_000_000,
+        inputModalities: ["text", "image"],
+        maxOutputTokens: 64_000,
+        pricing: {
+          cachedInput: 0.1,
+          input: 3,
+          output: 9,
         },
       },
       "deepseek-v4-pro": {
@@ -260,9 +270,9 @@ export class BuiltinProviderModelRegistry {
         inputModalities: ["text"],
         maxOutputTokens: 64_000,
         pricing: {
-          cachedInput: 0.025,
-          input: 3,
-          output: 6,
+          cachedInput: 0.3,
+          input: 9,
+          output: 27,
         },
       },
     },
@@ -316,6 +326,28 @@ export class BuiltinProviderModelRegistry {
           output: 4.4,
         },
       },
+      "glm-5.3-flash": {
+        contextWindow: 1_000_000,
+        inputModalities: ["text", "image"],
+        maxOutputTokens: 131_072,
+        pricing: {
+          cachedInput: 0.015,
+          input: 0.075,
+          output: 0.25,
+        },
+        reasoningEfforts: ["low", "high", "max"],
+      },
+      "muse-spark-1.2-contributor": {
+        contextWindow: 1_048_576,
+        inputModalities: ["text", "image"],
+        maxOutputTokens: 131_072,
+        pricing: {
+          cachedInput: 0.002,
+          input: 0.1,
+          output: 0.2,
+        },
+        reasoningEfforts: ["minimal", "low", "medium", "high", "xhigh"],
+      },
       "grok-4.5": {
         contextWindow: 500_000,
         defaultReasoningEffort: "high",
@@ -343,19 +375,30 @@ export class BuiltinProviderModelRegistry {
         inputModalities: ["text"],
         maxOutputTokens: 64_000,
         pricing: {
-          cachedInput: 0.0028,
-          input: 0.14,
-          output: 0.28,
+          cachedInput: 0.007,
+          input: 0.22,
+          output: 0.66,
         },
+      },
+      "deepseek-v4-flash-vision-exp": {
+        contextWindow: 1_000_000,
+        inputModalities: ["text", "image"],
+        maxOutputTokens: 384_000,
+        pricing: {
+          cachedInput: 0.007,
+          input: 0.22,
+          output: 0.66,
+        },
+        reasoningEfforts: ["low", "high", "max"],
       },
       "deepseek-v4-pro": {
         contextWindow: 1_000_000,
         inputModalities: ["text"],
         maxOutputTokens: 64_000,
         pricing: {
-          cachedInput: 0.0145,
-          input: 1.74,
-          output: 3.48,
+          cachedInput: 0.022,
+          input: 0.66,
+          output: 1.98,
         },
       },
       "kimi-k2.7-code": {

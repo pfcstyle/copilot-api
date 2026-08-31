@@ -525,8 +525,12 @@ const createWebSocketMessageStream = <TChunk>(
     wake()
   }
 
-  const onClose = () => {
-    consola.debug("WebSocket closed")
+  const onClose = (event: CloseEvent) => {
+    consola.debug("WebSocket closed", {
+      code: event.code,
+      reason: event.reason,
+      wasClean: event.wasClean,
+    })
     closed = true
     clearInactivityTimer()
     wake()

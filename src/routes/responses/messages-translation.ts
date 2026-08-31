@@ -50,6 +50,15 @@ export const MESSAGES_COMPACTION_PROMPT = [
   compactTextOnlyGuard,
 ].join("\n")
 
+export const MESSAGES_TOOL_CALL_TIPS = [
+  "# Tool Call Tips",
+  "- Do NOT call `exec_command` directly; that tool does not exist. Use `functions__exec` to run commands instead.",
+  '- The functions__exec tool accepts parameters only as {"input":"..."}; put the complete executable code inside input, including properly constructed tools.exec_command(...) calls and text(...) output handling.',
+  "- Construct all tools.exec_command(...) arguments strictly according to its tool definition, and use OS/shell-compatible commands for Windows, Linux, and macOS.",
+  "- Always assign the awaited tools.exec_command(...) call to a variable, then forward its output with text(result.output) and inspect result.exit_code; unforwarded output is silently dropped and makes results look empty.",
+  "- Read files with the OS-native command (Get-Content/Test-Path on Windows PowerShell, cat/ls on POSIX), quote paths containing spaces, and verify the forwarded output is non-empty before concluding a file was read.",
+].join("\n")
+
 const COMPACTION_REPLAY_PROMPT =
   "The previous conversation was compacted. Continue from this handoff summary:\n\n"
 const MAX_DEVELOPER_PROMPTS = 5
@@ -112,7 +121,7 @@ interface ResponsesInputNormalization {
 
 export function translateResponsesToMessages(
   payload: ResponsesPayload,
-  options: { model: string; publicModel?: string },
+  options: { model: string; publicModel?: string; toolCallTips?: boolean },
 ): ResponsesToMessagesTranslation {
   const registry = createToolRegistry(payload)
   const normalized = normalizeResponsesInput(payload.input)
@@ -121,6 +130,7 @@ export function translateResponsesToMessages(
     registry,
     payload.instructions,
     payload.input,
+    options.toolCallTips ?? false,
   )
 
   if (normalized.compaction) {
@@ -439,21 +449,11 @@ function registerMessagesTool(
   const existing = registry.byOriginal.get(originalKey)
   if (existing) return existing
 
-  const preferredName =
-    registration.namespace ?
-      `${registration.namespace.replaceAll(".", "_")}__${registration.name}`
-    : registration.name
-  const alias = createToolAlias(preferredName, originalKey, registry)
-  const descriptor: MessagesToolDescriptor = {
-    alias,
-    kind: registration.kind,
-    name: registration.name,
-    ...(registration.namespace ? { namespace: registration.namespace } : {}),
-  }
-  registry.byAlias.set(alias, descriptor)
+  const descriptor = createMessagesToolDescriptor(registration, registry)
+  registry.byAlias.set(descriptor.alias, descriptor)
   registry.byOriginal.set(originalKey, descriptor)
   registry.tools.push({
-    name: alias,
+    name: descriptor.alias,
     ...(registration.description ?
       { description: registration.description }
     : {}),
@@ -466,11 +466,30 @@ function registerMessagesTool(
   return descriptor
 }
 
+function createMessagesToolDescriptor(
+  registration: Pick<ToolRegistration, "kind" | "name" | "namespace">,
+  registry: MessagesToolRegistry,
+): MessagesToolDescriptor {
+  const originalKey = createOriginalToolKey(registration)
+  const preferredName =
+    registration.namespace ?
+      `${registration.namespace.replaceAll(".", "_")}__${registration.name}`
+    : registration.name
+  const alias = createToolAlias(preferredName, originalKey, registry)
+  return {
+    alias,
+    kind: registration.kind,
+    name: registration.name,
+    ...(registration.namespace ? { namespace: registration.namespace } : {}),
+  }
+}
+
 function translateInputToAnthropic(
   input: string | Array<ResponseInputItem> | undefined,
   registry: MessagesToolRegistry,
   instructions: string | null | undefined,
   originalInput: ResponsesPayload["input"],
+  toolCallTips: boolean,
 ): {
   messages: Array<AnthropicInputMessage>
   system: Array<AnthropicTextBlock>
@@ -484,10 +503,30 @@ function translateInputToAnthropic(
 
   if (typeof input === "string") {
     messages.push({ role: "user", content: input })
-    return { messages, system }
+  } else if (Array.isArray(input)) {
+    translateInputItems(input, messages, system, registry)
   }
-  if (!Array.isArray(input)) return { messages, system }
+  if (toolCallTips) {
+    appendToolCallTips(system)
+  }
+  return { messages, system }
+}
 
+function appendToolCallTips(system: Array<AnthropicTextBlock>): void {
+  const lastSystemBlock = system.at(-1)
+  if (!lastSystemBlock) {
+    system.push({ type: "text", text: MESSAGES_TOOL_CALL_TIPS })
+    return
+  }
+  lastSystemBlock.text = `${lastSystemBlock.text}\n\n${MESSAGES_TOOL_CALL_TIPS}`
+}
+
+function translateInputItems(
+  input: Array<ResponseInputItem>,
+  messages: Array<AnthropicInputMessage>,
+  system: Array<AnthropicTextBlock>,
+  registry: MessagesToolRegistry,
+): void {
   let userMessageSeen = false
   for (const item of input) {
     const type = getItemType(item)
@@ -540,7 +579,6 @@ function translateInputToAnthropic(
       }
     }
   }
-  return { messages, system }
 }
 
 function translateInputMessage(
@@ -656,7 +694,11 @@ function translateInputToolCall(
   }
   const name = requireStringField(item, "name", `${kind}_tool_call`)
   const namespace = getOptionalStringField(item, "namespace") ?? undefined
-  const descriptor = registerMessagesTool({ kind, name, namespace }, registry)
+  const toolIdentity = { kind, name, namespace }
+  // Historical calls preserve conversation state; they do not define tools.
+  const descriptor =
+    registry.byOriginal.get(createOriginalToolKey(toolIdentity))
+    ?? createMessagesToolDescriptor(toolIdentity, registry)
   const input =
     kind === "custom" ?
       { input: getStringField(item, "input") ?? "" }
@@ -785,8 +827,22 @@ function translateToolResultContent(
       `${path} must be text or an array`,
     )
   }
-  return value.map((part, index) =>
-    translateUserContentPart(part, `${path}[${index}]`),
+  // Codex Desktop can emit empty input_text parts in tool outputs; Anthropic
+  // rejects empty text blocks, so drop them instead of failing translation.
+  const blocks = value.flatMap((part, index) =>
+    isEmptyTextContentPart(part) ?
+      []
+    : [translateUserContentPart(part, `${path}[${index}]`)],
+  )
+  return blocks.length > 0 ? blocks : ""
+}
+
+function isEmptyTextContentPart(part: unknown): boolean {
+  if (!isRecord(part)) return false
+  const type = part.type
+  return (
+    (type === "input_text" || type === "output_text" || type === "text")
+    && part.text === ""
   )
 }
 
@@ -1081,17 +1137,15 @@ function appendUserBlock(
 
 function parseFunctionArguments(
   value: string,
-  path: string,
+  _path: string,
 ): Record<string, unknown> {
   try {
     const parsed = JSON.parse(value) as unknown
     if (isRecord(parsed)) return parsed
   } catch {
-    // The request error below contains the stable public message.
+    return {}
   }
-  throw new ResponsesMessagesTranslationError(
-    `${path} must be a JSON object string`,
-  )
+  return {}
 }
 
 function parseDataUrl(

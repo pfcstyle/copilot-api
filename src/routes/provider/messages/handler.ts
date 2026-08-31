@@ -54,6 +54,7 @@ import {
 import {
   flushPendingAnthropicStreamEvents,
   translateChunkToAnthropicEvents,
+  translateErrorToAnthropicErrorEvent,
 } from "~/routes/messages/stream-translation"
 import {
   buildErrorEvent,
@@ -270,7 +271,15 @@ const handleOpenAIResponsesProviderWebSearchMessages = async (
   const { modelConfig, payload, provider, providerConfig, usageEndpoint } =
     options
   const responsesPayload = prepareWebSearchResponsesPayload(payload)
-  normalizeProviderResponsesReasoningEffort(responsesPayload, providerConfig)
+  const normalizedReasoningEffort = normalizeProviderResponsesReasoningEffort(
+    responsesPayload,
+    providerConfig,
+  )
+  if (normalizedReasoningEffort) {
+    logger.debug(
+      `Normalized reasoning effort from ${normalizedReasoningEffort.from} to ${normalizedReasoningEffort.to} based on the provider model configuration`,
+    )
+  }
 
   debugJson(logger, "provider.messages.responses.web_search.request", {
     payload: responsesPayload,
@@ -382,7 +391,13 @@ const handleOpenAIResponsesProviderMessages = async (
     : undefined
   const wantsStream = payload.stream === true
   const responsesPayload = translateAnthropicMessagesToResponsesPayload(payload)
-  normalizeProviderResponsesReasoningEffort(responsesPayload, providerConfig)
+  const normalizedMessagesReasoningEffort =
+    normalizeProviderResponsesReasoningEffort(responsesPayload, providerConfig)
+  if (normalizedMessagesReasoningEffort) {
+    logger.debug(
+      `Normalized reasoning effort from ${normalizedMessagesReasoningEffort.from} to ${normalizedMessagesReasoningEffort.to} based on the provider model configuration`,
+    )
+  }
 
   if (providerConfig.name === "codex" && !wantsStream) {
     responsesPayload.stream = true
@@ -721,48 +736,68 @@ const streamProviderMessages = ({
   )
   return streamSSE(c, async (stream) => {
     let usage: UsageTokens = {}
+    let messageStopSeen = false
+    let errorSeen = false
     const openRouterThinkingState: OpenRouterThinkingStreamState = {
       signedThinkingBlockIndexes: new Set<number>(),
       thinkingBlockIndexes: new Set<number>(),
     }
 
-    for await (const chunk of events(upstreamResponse)) {
-      logger.debug("provider.messages.raw_stream_event:", chunk.data)
-      const eventName = chunk.event
-      if (eventName === "ping") {
-        await stream.writeSSE({ event: "ping", data: '{"type":"ping"}' })
-        continue
-      }
+    try {
+      for await (const chunk of events(upstreamResponse)) {
+        logger.debug("provider.messages.raw_stream_event:", chunk.data)
+        const eventName = chunk.event
+        if (eventName === "ping") {
+          await stream.writeSSE({ event: "ping", data: '{"type":"ping"}' })
+          continue
+        }
 
-      let data = chunk.data
-      if (!data) {
-        continue
-      }
+        let data = chunk.data
+        if (!data) {
+          continue
+        }
 
-      if (chunk.data === "[DONE]") {
-        break
-      }
+        if (chunk.data === "[DONE]") {
+          break
+        }
 
-      const parsed = parseProviderStreamEvent(data)
-      if (parsed) {
-        usage = mergeAnthropicUsage(usage, parsed.usage)
-        data = parsed.data
-      }
+        const parsed = parseProviderStreamEvent(data)
+        if (parsed) {
+          usage = mergeAnthropicUsage(usage, parsed.usage)
+          data = parsed.data
+          if (parsed.type === "message_stop") {
+            messageStopSeen = true
+          } else if (parsed.type === "error") {
+            errorSeen = true
+          }
+        }
 
-      const streamEvents =
-        provider === "openrouter" ?
-          normalizeOpenRouterStreamEvents(
-            eventName,
-            data,
-            openRouterThinkingState,
-          )
-        : [{ data, event: eventName }]
-      for (const streamEvent of streamEvents) {
-        await stream.writeSSE({
-          event: streamEvent.event,
-          data: streamEvent.data,
-        })
+        const streamEvents =
+          provider === "openrouter" ?
+            normalizeOpenRouterStreamEvents(
+              eventName,
+              data,
+              openRouterThinkingState,
+            )
+          : [{ data, event: eventName }]
+        for (const streamEvent of streamEvents) {
+          await stream.writeSSE({
+            event: streamEvent.event,
+            data: streamEvent.data,
+          })
+        }
       }
+    } catch (error) {
+      logger.warn("provider.messages.stream_interrupted:", { error, provider })
+    }
+
+    if (!messageStopSeen && !errorSeen) {
+      logger.warn("provider.messages.stream_incomplete:", { provider })
+      const errorEvent = translateErrorToAnthropicErrorEvent()
+      await stream.writeSSE({
+        event: errorEvent.type,
+        data: JSON.stringify(errorEvent),
+      })
     }
 
     recordUsage(usage)
@@ -798,51 +833,59 @@ const streamOpenAICompatibleProviderMessages = ({
     let usage: UsageTokens = {}
     const streamState: AnthropicStreamState = {
       messageStartSent: false,
+      messageCompleted: false,
       contentBlockIndex: 0,
       contentBlockOpen: false,
       toolCalls: {},
       thinkingBlockOpen: false,
     }
 
-    for await (const chunk of events(upstreamResponse)) {
-      logger.debug(
-        "provider.messages.openai_compatible.raw_stream_event:",
-        chunk.data,
-      )
-      const eventName = chunk.event
-      if (eventName === "ping") {
-        await stream.writeSSE({ event: "ping", data: '{"type":"ping"}' })
-        continue
-      }
-
-      if (!chunk.data || chunk.data === "[DONE]") {
-        if (chunk.data === "[DONE]") {
-          break
+    try {
+      for await (const chunk of events(upstreamResponse)) {
+        logger.debug(
+          "provider.messages.openai_compatible.raw_stream_event:",
+          chunk.data,
+        )
+        const eventName = chunk.event
+        if (eventName === "ping") {
+          await stream.writeSSE({ event: "ping", data: '{"type":"ping"}' })
+          continue
         }
-        continue
-      }
 
-      const parsed = parseOpenAICompatibleStreamChunk(chunk.data)
-      if (!parsed) {
-        continue
-      }
+        if (!chunk.data || chunk.data === "[DONE]") {
+          if (chunk.data === "[DONE]") {
+            break
+          }
+          continue
+        }
 
-      if (parsed.usage) {
-        usage = normalizeOpenAIUsage(parsed.usage)
-      }
+        const parsed = parseOpenAICompatibleStreamChunk(chunk.data)
+        if (!parsed) {
+          continue
+        }
 
-      const events = translateChunkToAnthropicEvents(parsed, streamState)
-      for (const event of events) {
-        const eventData = JSON.stringify(event)
-        debugLazy(logger, () => [
-          "provider.messages.openai_compatible.translated_event:",
-          eventData,
-        ])
-        await stream.writeSSE({
-          event: event.type,
-          data: eventData,
-        })
+        if (parsed.usage) {
+          usage = normalizeOpenAIUsage(parsed.usage)
+        }
+
+        const events = translateChunkToAnthropicEvents(parsed, streamState)
+        for (const event of events) {
+          const eventData = JSON.stringify(event)
+          debugLazy(logger, () => [
+            "provider.messages.openai_compatible.translated_event:",
+            eventData,
+          ])
+          await stream.writeSSE({
+            event: event.type,
+            data: eventData,
+          })
+        }
       }
+    } catch (error) {
+      logger.warn("provider.messages.openai_compatible.stream_interrupted:", {
+        error,
+        provider,
+      })
     }
 
     for (const event of flushPendingAnthropicStreamEvents(streamState)) {
@@ -854,6 +897,17 @@ const streamOpenAICompatibleProviderMessages = ({
       await stream.writeSSE({
         event: event.type,
         data: eventData,
+      })
+    }
+
+    if (!streamState.messageCompleted) {
+      logger.warn("provider.messages.openai_compatible.stream_incomplete:", {
+        provider,
+      })
+      const errorEvent = translateErrorToAnthropicErrorEvent()
+      await stream.writeSSE({
+        event: errorEvent.type,
+        data: JSON.stringify(errorEvent),
       })
     }
 
@@ -992,23 +1046,30 @@ const parseResponsesProviderStreamChunk = (
 
 const parseProviderStreamEvent = (
   data: string,
-): { data: string; model?: string; usage: UsageTokens } | null => {
+): {
+  data: string
+  model?: string
+  type: AnthropicStreamEventData["type"]
+  usage: UsageTokens
+} | null => {
   try {
     const parsed = JSON.parse(data) as AnthropicStreamEventData
     if (parsed.type === "message_start") {
       return {
         data: JSON.stringify(parsed),
         model: parsed.message.model,
+        type: parsed.type,
         usage: normalizeAnthropicUsage(parsed.message.usage),
       }
     }
     if (parsed.type === "message_delta") {
       return {
         data: JSON.stringify(parsed),
+        type: parsed.type,
         usage: normalizeAnthropicUsage(parsed.usage),
       }
     }
-    return { data: JSON.stringify(parsed), usage: {} }
+    return { data: JSON.stringify(parsed), type: parsed.type, usage: {} }
   } catch (error) {
     logger.error("provider.messages.streaming.adjust_tokens_error", {
       error,

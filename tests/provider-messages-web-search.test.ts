@@ -444,6 +444,7 @@ describe("provider messages web_search", () => {
     expect(upstreamBody.tools).toEqual([
       {
         type: "web_search",
+        search_context_size: "low",
         filters: {
           allowed_domains: ["nodejs.org"],
         },
@@ -496,6 +497,7 @@ describe("provider messages web_search", () => {
     expect(upstreamBody.tools).toEqual([
       {
         type: "web_search",
+        search_context_size: "low",
         filters: {
           allowed_domains: ["nodejs.org"],
         },

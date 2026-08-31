@@ -11,7 +11,7 @@ import {
 } from "~/lib/config"
 import { createHandlerLogger, debugJson } from "~/lib/logger"
 import { findEndpointModel } from "~/lib/models"
-import { parseProviderModelAlias } from "~/lib/provider-model"
+import { resolveConfiguredProviderModelAlias } from "~/lib/provider-resolver"
 import { state } from "~/lib/state"
 import type { SubagentMarker } from "~/lib/subagent"
 import type { TokenUsageEndpoint } from "~/lib/token-usage"
@@ -20,7 +20,10 @@ import {
   getRootSessionId,
   getUUID,
 } from "~/lib/utils"
-import { handleProviderMessagesForProvider } from "~/routes/provider/messages/handler"
+import {
+  handleProviderMessagesForProvider,
+  providerMessagesHandlerDependencies,
+} from "~/routes/provider/messages/handler"
 import { getResponsesTransportForModel } from "~/routes/responses/utils"
 
 import type { AnthropicMessagesPayload } from "~/lib/types/anthropic"
@@ -105,7 +108,10 @@ export async function handleCompletionPayload(
     anthropicPayload.model = claudeAutoModel
   }
 
-  const providerModelAlias = parseProviderModelAlias(anthropicPayload.model)
+  const providerModelAlias = await resolveConfiguredProviderModelAlias(
+    anthropicPayload.model,
+    providerMessagesHandlerDependencies.resolveProviderConfig,
+  )
   if (providerModelAlias) {
     anthropicPayload.model = providerModelAlias.model
     return await handleProviderMessagesForProvider(c, {

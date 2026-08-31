@@ -6,6 +6,8 @@ import type {
   AnthropicResponse,
 } from "~/lib/types/anthropic"
 import type { ResponsesPayload, ResponsesResult } from "~/lib/types/responses"
+import type { ResolvedProviderConfig } from "~/lib/config"
+import type { ProviderConfigResolver } from "~/lib/provider-resolver"
 
 import {
   buildSyntheticStreamEvents,
@@ -346,17 +348,23 @@ describe("web search tool detection", () => {
 describe("resolveWebSearchRoute", () => {
   const opts = { webSearchModel: "gpt-5-mini", responsesWebSearchEnabled: true }
 
-  it("routes a Copilot model to the responses path", () => {
-    expect(resolveWebSearchRoute(makePayload(), opts)).toEqual({
+  const resolveConfiguredProvider: ProviderConfigResolver = () =>
+    Promise.resolve({} as ResolvedProviderConfig)
+  const resolveMissingProvider: ProviderConfigResolver = () =>
+    Promise.resolve(null)
+
+  it("routes a Copilot model to the responses path", async () => {
+    expect(await resolveWebSearchRoute(makePayload(), opts)).toEqual({
       kind: "responses",
       model: "gpt-5-mini",
     })
   })
 
-  it("routes a provider/model alias to provider passthrough", () => {
-    const route = resolveWebSearchRoute(makePayload(), {
+  it("routes a provider/model alias to provider passthrough", async () => {
+    const route = await resolveWebSearchRoute(makePayload(), {
       ...opts,
       webSearchModel: "anthropic/claude-sonnet-4-5",
+      resolveProviderConfig: resolveConfiguredProvider,
     })
     expect(route).toEqual({
       kind: "provider",
@@ -364,31 +372,46 @@ describe("resolveWebSearchRoute", () => {
     })
   })
 
-  it("strips when web_search is mixed with other tools", () => {
+  it("strips when the alias provider is not configured", async () => {
+    // A messageApiWebSearchModel alias pointing at an unconfigured provider
+    // must not be routed (404) nor passed to Copilot as a model id.
+    const route = await resolveWebSearchRoute(makePayload(), {
+      ...opts,
+      webSearchModel: "anthropic/claude-sonnet-4-5",
+      resolveProviderConfig: resolveMissingProvider,
+    })
+    expect(route.kind).toBe("strip")
+  })
+
+  it("strips when web_search is mixed with other tools", async () => {
     const payload = makePayload({
       tools: [
         webSearchTool,
         { name: "get_weather", input_schema: { type: "object" } },
       ] as never,
     })
-    expect(resolveWebSearchRoute(payload, opts).kind).toBe("strip")
+    expect((await resolveWebSearchRoute(payload, opts)).kind).toBe("strip")
   })
 
-  it("strips when no web search model is configured", () => {
+  it("strips when no web search model is configured", async () => {
     expect(
-      resolveWebSearchRoute(makePayload(), {
-        webSearchModel: undefined,
-        responsesWebSearchEnabled: true,
-      }).kind,
+      (
+        await resolveWebSearchRoute(makePayload(), {
+          webSearchModel: undefined,
+          responsesWebSearchEnabled: true,
+        })
+      ).kind,
     ).toBe("strip")
   })
 
-  it("strips a Copilot model when responses web search is disabled", () => {
+  it("strips a Copilot model when responses web search is disabled", async () => {
     expect(
-      resolveWebSearchRoute(makePayload(), {
-        webSearchModel: "gpt-5-mini",
-        responsesWebSearchEnabled: false,
-      }).kind,
+      (
+        await resolveWebSearchRoute(makePayload(), {
+          webSearchModel: "gpt-5-mini",
+          responsesWebSearchEnabled: false,
+        })
+      ).kind,
     ).toBe("strip")
   })
 })
@@ -455,7 +478,10 @@ describe("handleWebSearchViaResponses", () => {
     // Request was switched to the GPT model with a Responses web_search tool.
     expect(sentPayload?.model).toBe("gpt-5-mini")
     expect(sentPayload?.stream).toBe(true)
-    expect(sentPayload?.tools).toEqual([{ type: "web_search" }])
+    expect(sentPayload?.tools).toEqual([
+      { type: "web_search", search_context_size: "low" },
+    ])
+    expect(sentPayload?.reasoning).toEqual({ effort: "low", summary: "auto" })
 
     const response = captured.json as AnthropicResponse
     const types = response.content.map((b) => b.type as string)

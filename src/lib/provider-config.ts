@@ -23,7 +23,7 @@ export interface ResolvedProviderConfig {
 }
 
 const OPENCODE_ANTHROPIC_MODEL_PATTERN = /^(?:qwen|minimax)/iu
-const OPENCODE_RESPONSES_MODEL_PATTERN = /^(?:gpt|grok)(?:[-_.]|$)/iu
+const OPENCODE_RESPONSES_MODEL_PATTERN = /^(?:gpt|grok|muse-spark)(?:[-_.]|$)/iu
 
 export function normalizeProviderBaseUrl(url: string): string {
   return url.trim().replace(/\/+$/u, "")

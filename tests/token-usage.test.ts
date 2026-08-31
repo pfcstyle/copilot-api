@@ -243,7 +243,7 @@ describe("token usage storage", () => {
 
   test("calculates built-in Codex GPT-5.6 prices with cached input discount", async () => {
     const expectedCosts = [
-      { model: "gpt-5.6-sol", totalCostNanos: 96_000_000 },
+      { model: "gpt-5.6-sol", totalCostNanos: 64_800_000 },
       { model: "gpt-5.6-terra", totalCostNanos: 38_400_000 },
       { model: "gpt-5.6-luna", totalCostNanos: 3_840_000 },
     ]
@@ -279,9 +279,9 @@ describe("token usage storage", () => {
     const summary = (await response.json()) as TokenUsageSummary
     expect(summary.totals.costs).toEqual([
       {
-        amount: 0.13824,
+        amount: 0.10704,
         currency: "USD",
-        total_cost_nanos: 138_240_000,
+        total_cost_nanos: 107_040_000,
       },
     ])
   })
@@ -433,6 +433,54 @@ describe("token usage storage", () => {
       source: "builtin",
       total_cost_nanos: 7_400_000,
     })
+  })
+
+  test("prices DeepSeek models with peak-tier prices in CNY", () => {
+    const expectedCosts = [
+      { model: "deepseek-v4-flash", totalCostNanos: 30_200_000 },
+      { model: "deepseek-v4-pro", totalCostNanos: 90_600_000 },
+    ]
+
+    for (const { model, totalCostNanos } of expectedCosts) {
+      expect(
+        resolveTokenUsageCost({
+          cache_read_input_tokens: 2_000,
+          input_tokens: 1_000,
+          model,
+          output_tokens: 3_000,
+          providerName: "deepseek",
+          source: "provider",
+        }),
+      ).toEqual({
+        currency: "CNY",
+        source: "builtin",
+        total_cost_nanos: totalCostNanos,
+      })
+    }
+  })
+
+  test("prices OpenCode Go DeepSeek models with catalog prices in USD", () => {
+    const expectedCosts = [
+      { model: "deepseek-v4-flash", totalCostNanos: 2_214_000 },
+      { model: "deepseek-v4-pro", totalCostNanos: 6_644_000 },
+    ]
+
+    for (const { model, totalCostNanos } of expectedCosts) {
+      expect(
+        resolveTokenUsageCost({
+          cache_read_input_tokens: 2_000,
+          input_tokens: 1_000,
+          model,
+          output_tokens: 3_000,
+          providerName: "opencode-go",
+          source: "provider",
+        }),
+      ).toEqual({
+        currency: "USD",
+        source: "builtin",
+        total_cost_nanos: totalCostNanos,
+      })
+    }
   })
 
   test("prices Kimi models in USD and DashScope Kimi in CNY", () => {

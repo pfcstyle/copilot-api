@@ -73,6 +73,34 @@ const createApp = () => {
   return app
 }
 
+const createSseStreamResponse = (chunks: Array<Record<string, unknown>>) =>
+  new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        const encoder = new TextEncoder()
+        for (const chunk of chunks) {
+          controller.enqueue(
+            encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`),
+          )
+        }
+        // The upstream connection drops here: no [DONE] sentinel.
+        controller.close()
+      },
+    }),
+    {
+      headers: { "content-type": "text/event-stream; charset=utf-8" },
+    },
+  )
+
+const parseSseData = (text: string): Array<Record<string, unknown>> =>
+  text
+    .split("\n")
+    .filter((line) => line.startsWith("data: ") && line !== "data: [DONE]")
+    .map(
+      (line) =>
+        JSON.parse(line.slice("data: ".length)) as Record<string, unknown>,
+    )
+
 beforeEach(() => {
   providerConfig = {
     name: "dashscope",
@@ -267,6 +295,101 @@ describe("openai-compatible provider messages", () => {
     expect(body.stream_options).toEqual({
       include_usage: true,
     })
+  })
+
+  test("emits an Anthropic error event when the stream breaks during thinking output", async () => {
+    const thinkingChunk = {
+      id: "chatcmpl-thinking-cut",
+      object: "chat.completion.chunk",
+      created: 0,
+      model: "qwen-plus",
+      choices: [
+        {
+          index: 0,
+          delta: { reasoning_content: "partial thought" },
+          finish_reason: null,
+          logprobs: null,
+        },
+      ],
+    }
+    fetchMock.mockImplementationOnce(() =>
+      Promise.resolve(createSseStreamResponse([thinkingChunk])),
+    )
+
+    const app = createApp()
+    const response = await app.request("/dash/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        max_tokens: 128,
+        messages: [{ role: "user", content: "hello" }],
+        model: "qwen-plus",
+        stream: true,
+      }),
+    })
+
+    expect(response.status).toBe(200)
+    const events = parseSseData(await response.text())
+    const eventTypes = events.map((event) => event.type)
+
+    expect(eventTypes).toContain("message_start")
+    expect(eventTypes).toContain("content_block_delta")
+    expect(eventTypes).not.toContain("message_stop")
+    expect(events.at(-1)).toEqual({
+      type: "error",
+      error: {
+        message:
+          "An unexpected error occurred during streaming, retry your request.",
+        type: "api_error",
+      },
+    })
+  })
+
+  test("emits an Anthropic error event when the upstream stream fails", async () => {
+    fetchMock.mockImplementationOnce(() =>
+      Promise.resolve(
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              controller.error(new Error("upstream connection reset"))
+            },
+          }),
+          {
+            headers: { "content-type": "text/event-stream; charset=utf-8" },
+          },
+        ),
+      ),
+    )
+
+    const app = createApp()
+    const response = await app.request("/dash/v1/messages", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        max_tokens: 128,
+        messages: [{ role: "user", content: "hello" }],
+        model: "qwen-plus",
+        stream: true,
+      }),
+    })
+
+    expect(response.status).toBe(200)
+    const events = parseSseData(await response.text())
+
+    expect(events).toEqual([
+      {
+        type: "error",
+        error: {
+          message:
+            "An unexpected error occurred during streaming, retry your request.",
+          type: "api_error",
+        },
+      },
+    ])
   })
 
   test("allows extraBody to disable parallel tool calls", async () => {

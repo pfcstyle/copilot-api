@@ -18,7 +18,6 @@ import {
   type ResponsesResult,
   type ResponseStreamEvent,
   type ResponseTextDeltaEvent,
-  type ResponseTextDoneEvent,
 } from "~/lib/types/responses"
 
 import { type AnthropicStreamEventData } from "~/lib/types/anthropic"
@@ -129,9 +128,6 @@ export const translateResponsesStreamEvent = (
       return handleReasoningSummaryTextDone(rawEvent, state)
     }
 
-    case "response.output_text.done": {
-      return handleOutputTextDone(rawEvent, state)
-    }
     case "response.output_item.done": {
       return handleOutputItemDone(rawEvent, state)
     }
@@ -510,35 +506,6 @@ const handleReasoningSummaryTextDone = (
   return events
 }
 
-const handleOutputTextDone = (
-  rawEvent: ResponseTextDoneEvent,
-  state: ResponsesStreamState,
-): Array<AnthropicStreamEventData> => {
-  const events = new Array<AnthropicStreamEventData>()
-  const outputIndex = rawEvent.output_index
-  const contentIndex = rawEvent.content_index
-  const text = rawEvent.text
-
-  const blockIndex = openTextBlockIfNeeded(state, {
-    outputIndex,
-    contentIndex,
-    events,
-  })
-
-  if (text && !state.blockHasDelta.has(blockIndex)) {
-    events.push({
-      type: "content_block_delta",
-      index: blockIndex,
-      delta: {
-        type: "text_delta",
-        text,
-      },
-    })
-  }
-
-  return events
-}
-
 const handleResponseCompleted = (
   rawEvent: ResponseCompletedEvent | ResponseIncompleteEvent,
   state: ResponsesStreamState,
@@ -792,8 +759,7 @@ const openFunctionCallBlock = (
   const { blockIndex } = functionCallState
 
   if (!state.openBlocks.has(blockIndex)) {
-    // Responses providers may interleave parallel function-call events. Keep
-    // their blocks open until completion or a different content type starts.
+    closeOpenBlocks(state, events)
     events.push({
       type: "content_block_start",
       index: blockIndex,

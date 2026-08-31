@@ -79,6 +79,7 @@ function completePendingMessage(
     type: "message_stop",
   })
   state.pendingMessageDelta = undefined
+  state.messageCompleted = true
 }
 
 function handleFinish(
@@ -484,7 +485,8 @@ export function translateErrorToAnthropicErrorEvent(): AnthropicStreamEventData 
     type: "error",
     error: {
       type: "api_error",
-      message: "An unexpected error occurred during streaming.",
+      message:
+        "An unexpected error occurred during streaming, retry your request.",
     },
   }
 }
