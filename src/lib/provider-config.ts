@@ -33,6 +33,26 @@ export function isSupportedProviderType(value: string): value is ProviderType {
   return SUPPORTED_PROVIDER_TYPES.includes(value as ProviderType)
 }
 
+/**
+ * Provider types that speak the OpenAI Responses protocol. Volcengine Ark
+ * ("ark-doubao") serves the same payload shape as "openai-responses" but
+ * mounts it under a different API path prefix.
+ */
+export function isResponsesProviderType(type: ProviderType): boolean {
+  return type === "openai-responses" || type === "ark-doubao"
+}
+
+const ARK_API_PATH_PREFIX = "/v3"
+const DEFAULT_API_PATH_PREFIX = "/v1"
+
+/**
+ * Upstream path prefix for a provider type. Ark exposes /v3/responses instead
+ * of the OpenAI-standard /v1/responses.
+ */
+export function getProviderApiPathPrefix(type: ProviderType): string {
+  return type === "ark-doubao" ? ARK_API_PATH_PREFIX : DEFAULT_API_PATH_PREFIX
+}
+
 function getDefaultProviderAuthType(
   providerType: ProviderType,
 ): ProviderAuthType {

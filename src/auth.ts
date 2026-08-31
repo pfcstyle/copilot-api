@@ -34,7 +34,7 @@ const authArgs = {
   provider: {
     type: "string",
     description:
-      "Provider to log in with or configure (copilot, codex, opencode-go, kimi, deepseek, dashscope, openrouter, custom)",
+      "Provider to log in with or configure (copilot, codex, opencode-go, kimi, deepseek, dashscope, openrouter, doubao, ali, custom)",
   },
   verbose: {
     alias: "v",
@@ -77,6 +77,8 @@ const AUTH_PROVIDER_LABELS: Record<AuthProviderName, string> = {
   deepseek: "DeepSeek",
   dashscope: "DashScope",
   openrouter: "OpenRouter",
+  doubao: "Doubao (Volcengine Ark)",
+  ali: "Aliyun Token Plan",
   custom: "Custom provider",
 }
 

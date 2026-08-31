@@ -2,6 +2,7 @@ import type { Context } from "hono"
 import consola from "consola"
 
 import {
+  isResponsesProviderType,
   resolveEffectiveProviderType,
   resolveMappedModel,
   type ResolvedProviderConfig,
@@ -633,10 +634,12 @@ async function resolveRemoteModel(
     }
 
     if (
-      alphaSearchResponsesDependencies.resolveEffectiveProviderType(
-        providerConfig,
-        model,
-      ) !== "openai-responses"
+      !isResponsesProviderType(
+        alphaSearchResponsesDependencies.resolveEffectiveProviderType(
+          providerConfig,
+          model,
+        ),
+      )
     ) {
       return invalidRequest(
         c,

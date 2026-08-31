@@ -456,6 +456,74 @@ describe("provider Responses context management", () => {
     expect((init as RequestInit).signal).toBeInstanceOf(AbortSignal)
   })
 
+  test("downgrades none reasoning for Ark Coding Plan models", async () => {
+    providerConfig = {
+      apiKey: "provider-key",
+      authType: "authorization",
+      baseUrl: "https://ark.example/api/coding",
+      models: {
+        "kimi-k2.7-code": {},
+      },
+      name: "doubao",
+      type: "ark-doubao",
+    }
+
+    const response = await createApp().request("/doubao/v1/responses", {
+      body: JSON.stringify({
+        input: "hello",
+        model: "kimi-k2.7-code",
+        reasoning: { effort: "none" },
+      }),
+      headers: {
+        "content-type": "application/json",
+      },
+      method: "POST",
+    })
+
+    expect(response.status).toBe(200)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "https://ark.example/api/coding/v3/responses",
+    )
+
+    const [, init] = fetchMock.mock.calls[0]
+    const body = parseJsonRequestBody((init as RequestInit).body) as {
+      reasoning?: { effort?: string }
+    }
+    expect(body.reasoning?.effort).toBe("low")
+  })
+
+  test("forwards Aliyun Token Plan Responses without duplicating /v1", async () => {
+    providerConfig = {
+      apiKey: "provider-key",
+      authType: "authorization",
+      baseUrl:
+        "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+      models: {
+        "kimi-k2.7-code": {},
+      },
+      name: "ali",
+      type: "openai-responses",
+    }
+
+    const response = await createApp().request("/ali/v1/responses", {
+      body: JSON.stringify({
+        input: "hello",
+        model: "kimi-k2.7-code",
+      }),
+      headers: {
+        "content-type": "application/json",
+      },
+      method: "POST",
+    })
+
+    expect(response.status).toBe(200)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock.mock.calls[0]?.[0]).toBe(
+      "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1/responses",
+    )
+  })
+
   test("keeps codex-prefixed provider models on the native Responses route for Codex clients", async () => {
     providerConfig = {
       apiKey: "provider-key",

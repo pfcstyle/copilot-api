@@ -6,6 +6,7 @@ import { logCodexRateLimitsEvent } from "~/lib/codex-rate-limit"
 import {
   type ModelConfig,
   type ProviderType,
+  isResponsesProviderType,
   resolveEffectiveProviderType,
 } from "~/lib/config"
 import { HTTPError } from "~/lib/error"
@@ -99,7 +100,7 @@ export async function handleProviderResponsesForProvider(
     })
   }
 
-  if (effectiveType !== "openai-responses") {
+  if (!isResponsesProviderType(effectiveType)) {
     return c.json(
       {
         error: {

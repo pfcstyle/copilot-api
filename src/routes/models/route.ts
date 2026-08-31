@@ -2,6 +2,7 @@ import { Hono } from "hono"
 
 import {
   listEnabledProviders,
+  isResponsesProviderType,
   resolveEffectiveProviderType,
   type CodexReasoningEffort,
   type ModelConfig,
@@ -139,6 +140,14 @@ async function getProviderModelRecords(
   providerConfig: ResolvedProviderConfig,
   requestHeaders: Headers,
 ): Promise<Array<Record<string, unknown>>> {
+  // Volcengine Ark's /models catalog lists versioned ids (e.g.
+  // "deepseek-v4-pro-260425") and omits the console's recommended aliases
+  // (e.g. "kimi-k2.7-code"), even though those aliases are callable. Serve the
+  // curated built-in catalog instead so the exposed ids match the console.
+  if (providerConfig.type === "ark-doubao") {
+    return getBuiltinProviderModelRecords(providerConfig.name)
+  }
+
   try {
     const response = await forwardProviderModels(providerConfig, requestHeaders)
     if (!response.ok) {
@@ -358,7 +367,7 @@ async function getProviderCodexCandidates(
         modelId,
       )
       const usesMessagesFallback = isMessagesFallbackProviderType(effectiveType)
-      if (!usesMessagesFallback && effectiveType !== "openai-responses") {
+      if (!usesMessagesFallback && !isResponsesProviderType(effectiveType)) {
         continue
       }
       const modelConfig = providerConfig.models?.[modelId]
@@ -385,7 +394,7 @@ function isMessagesFallbackProviderType(type: ProviderType): boolean {
 
 function describeProviderAdapter(type: ProviderType): string {
   if (type === "anthropic") return "Messages"
-  if (type === "openai-responses") return "Messages-to-Responses"
+  if (isResponsesProviderType(type)) return "Messages-to-Responses"
   return "Messages-to-Chat"
 }
 
@@ -430,7 +439,7 @@ function createProviderCodexCandidate(
   // shouldFallbackToMessages), so only gpt-* models require upstream catalog
   // metadata and the rest can be synthesized like Messages-fallback models.
   const requiresCatalogMatch =
-    effectiveType === "openai-responses" && modelId.startsWith("gpt")
+    isResponsesProviderType(effectiveType) && modelId.startsWith("gpt")
 
   return {
     slug: `${providerConfig.name}/${modelId}`,

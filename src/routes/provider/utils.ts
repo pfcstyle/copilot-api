@@ -12,6 +12,18 @@ interface SamplingPayload {
   top_k?: number | null
 }
 
+// Ark Coding Plan and Aliyun Token Plan models, including kimi-k2.7-code,
+// always run in thinking mode. Their Responses APIs reject
+// `reasoning.effort: "none"` rather than treating it as a request for the
+// lowest thinking level.
+const THINKING_ONLY_RESPONSES_REASONING_EFFORTS = [
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const
+
 export const applyModelDefaults = (
   payload: SamplingPayload,
   modelConfig: ModelConfig | undefined,
@@ -46,10 +58,23 @@ export const normalizeProviderResponsesReasoningEffort = (
     payload.model,
   )
   const configuredEfforts = modelConfig?.reasoningEfforts
-  const supportedEfforts =
+  const configuredSupportedEfforts =
     configuredEfforts && configuredEfforts.length > 0 ?
       configuredEfforts
     : builtinModelConfig?.reasoningEfforts
+  const supportedEfforts = (() => {
+    const isAliTokenPlan = providerConfig.baseUrl.includes("token-plan.")
+    if (providerConfig.type !== "ark-doubao" && !isAliTokenPlan) {
+      return configuredSupportedEfforts
+    }
+
+    const thinkingOnlyEfforts = configuredSupportedEfforts?.filter(
+      (effort) => effort !== "none",
+    )
+    return thinkingOnlyEfforts && thinkingOnlyEfforts.length > 0 ?
+        thinkingOnlyEfforts
+      : [...THINKING_ONLY_RESPONSES_REASONING_EFFORTS]
+  })()
 
   const resolvedEffort = resolveSupportedReasoningEffort(
     payload.reasoning.effort,

@@ -24,6 +24,7 @@ import {
   type ModelConfig,
   type ResolvedProviderConfig,
   getClaudeAutoModel,
+  isResponsesProviderType,
   resolveEffectiveProviderType,
   resolveProviderAuthType,
 } from "~/lib/config"
@@ -159,7 +160,7 @@ export async function handleProviderMessagesForProvider(
 
     applyModelDefaults(payload, modelConfig)
 
-    if (effectiveType === "openai-responses") {
+    if (isResponsesProviderType(effectiveType)) {
       if (hasWebSearchServerTool(payload)) {
         if (isWebSearchOnlyRequest(payload)) {
           return await handleOpenAIResponsesProviderWebSearchMessages(c, {
