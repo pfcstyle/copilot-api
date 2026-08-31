@@ -171,6 +171,30 @@ export const sanitizeAllInputImages = (payload: ResponsesPayload): number => {
   return sanitizeInputImages(payload.input, () => true)
 }
 
+/**
+ * Copilot Responses only accepts `low` and `high` image detail levels. Codex
+ * sends `auto` by default, so normalize it before forwarding the request.
+ */
+export const normalizeInputImageDetails = (
+  payload: ResponsesPayload,
+): number => {
+  if (!Array.isArray(payload.input)) {
+    return 0
+  }
+
+  let count = 0
+  for (const image of collectInputImages(payload.input)) {
+    if (image.detail === "low" || image.detail === "high") {
+      continue
+    }
+
+    image.detail = "low"
+    count += 1
+  }
+
+  return count
+}
+
 interface InputImageDataUrl {
   decodedBytes: number
   record: ResponseInputImage
@@ -197,59 +221,64 @@ const collectInputImageDataUrls = (
   input: Array<ResponseInputItem>,
   images: Array<InputImageDataUrl> = [],
 ): Array<InputImageDataUrl> => {
-  for (const item of input) {
-    collectInputItemImageDataUrls(item, images)
+  for (const image of collectInputImages(input)) {
+    if (
+      typeof image.image_url !== "string"
+      || !image.image_url.startsWith(DATA_URL_PREFIX)
+    ) {
+      continue
+    }
+
+    images.push({
+      decodedBytes: estimateDataUrlByteLength(image.image_url),
+      record: image,
+    })
   }
 
   return images
 }
 
-const collectInputItemImageDataUrls = (
+const collectInputImages = (
+  input: Array<ResponseInputItem>,
+  images: Array<ResponseInputImage> = [],
+): Array<ResponseInputImage> => {
+  for (const item of input) {
+    collectInputItemImages(item, images)
+  }
+
+  return images
+}
+
+const collectInputItemImages = (
   item: ResponseInputItem,
-  images: Array<InputImageDataUrl>,
+  images: Array<ResponseInputImage>,
 ): void => {
   if (isResponseInputMessage(item)) {
-    collectContentImageDataUrls(item.content, images)
+    collectContentImages(item.content, images)
   } else if (isResponseFunctionCallOutputItem(item)) {
-    collectContentImageDataUrls(item.output, images)
+    collectContentImages(item.output, images)
   }
 }
 
-const collectContentImageDataUrls = (
+const collectContentImages = (
   content: string | Array<ResponseInputContent> | undefined,
-  images: Array<InputImageDataUrl>,
+  images: Array<ResponseInputImage>,
 ): void => {
   if (!Array.isArray(content)) {
     return
   }
 
   for (const block of content) {
-    const image = getInputImageDataUrl(block)
+    const image = getInputImage(block)
     if (image) {
       images.push(image)
     }
   }
 }
 
-const getInputImageDataUrl = (
+const getInputImage = (
   content: ResponseInputContent,
-): InputImageDataUrl | null => {
-  if (!isResponseInputImage(content) || typeof content.image_url !== "string") {
-    return null
-  }
-
-  const imageUrl = content.image_url
-  if (!imageUrl.startsWith(DATA_URL_PREFIX)) {
-    return null
-  }
-
-  const decodedBytes = estimateDataUrlByteLength(imageUrl)
-
-  return {
-    decodedBytes,
-    record: content,
-  }
-}
+): ResponseInputImage | null => (isResponseInputImage(content) ? content : null)
 
 const estimateDataUrlByteLength = (value: string): number => {
   return Math.max(0, Math.floor((value.length * 3) / 4))

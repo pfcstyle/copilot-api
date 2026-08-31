@@ -42,6 +42,9 @@ const { responsesMessagesDependencies } = await import(
 const { responsesRoutes } = await import("~/routes/responses/route")
 const { responsesUtilsDependencies } = await import("~/routes/responses/utils")
 const { generateRequestIdFromPayload, getUUID } = await import("~/lib/utils")
+const { encodeMessagesCompaction } = await import(
+  "~/routes/responses/messages-translation"
+)
 
 const defaultResponsesHandlerDependencies = {
   ...responsesHandlerDependencies,
@@ -905,6 +908,44 @@ describe("responses handler token usage", () => {
     expect(createResponses.mock.calls[0][0].input).toEqual(input)
   })
 
+  test("replays locally encoded Messages compaction before native forwarding", async () => {
+    createResponses.mockImplementation((payload) =>
+      Promise.resolve(createResponsesResult(payload.model)),
+    )
+    const app = createApp()
+    const response = await app.request("/v1/responses", {
+      body: JSON.stringify({
+        input: [
+          { content: "old conversation", role: "user" },
+          {
+            encrypted_content: encodeMessagesCompaction(
+              "Completed the review.",
+            ),
+            id: "compaction-1",
+            type: "compaction",
+          },
+          { content: "Continue.", role: "user" },
+          { type: "compaction_trigger" },
+        ],
+        model: "gpt-test",
+      }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    })
+
+    expect(response.status).toBe(200)
+    expect(createResponses.mock.calls[0][0].input).toEqual([
+      {
+        content:
+          "The previous conversation was compacted. Continue from this handoff summary:\n\nCompleted the review.",
+        role: "developer",
+        type: "message",
+      },
+      { content: "Continue.", role: "user" },
+      { type: "compaction_trigger" },
+    ])
+  })
+
   test("preserves custom apply_patch tools for Copilot Responses", async () => {
     createResponses.mockImplementation((payload) =>
       Promise.resolve(createResponsesResult(payload.model)),
@@ -1395,6 +1436,138 @@ describe("responses handler token usage", () => {
         ],
         role: "user",
       },
+    ])
+  })
+
+  test("normalizes Codex auto image detail before forwarding to Copilot Responses", async () => {
+    createResponses.mockImplementation((payload) =>
+      Promise.resolve(createResponsesResult(payload.model)),
+    )
+
+    const app = createApp()
+    const response = await app.request("/v1/responses", {
+      body: JSON.stringify({
+        input: [
+          {
+            content: [
+              {
+                detail: "auto",
+                image_url: "https://example.com/image.png",
+                type: "input_image",
+              },
+            ],
+            role: "user",
+          },
+        ],
+        model: "gpt-test",
+      }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    })
+
+    expect(response.status).toBe(200)
+    expect(createResponses.mock.calls[0][0].input).toEqual([
+      {
+        content: [
+          {
+            detail: "low",
+            image_url: "https://example.com/image.png",
+            type: "input_image",
+          },
+        ],
+        role: "user",
+      },
+    ])
+  })
+
+  test("retries an initial encrypted-content stream error without reasoning signatures", async () => {
+    const receivedInputs: Array<unknown> = []
+    createResponses.mockImplementation((payload) => {
+      receivedInputs.push(structuredClone(payload.input))
+      if (receivedInputs.length === 1) {
+        return Promise.resolve(
+          streamChunks([
+            {
+              data: JSON.stringify({
+                code: null,
+                message: "Encrypted content could not be decrypted or parsed.",
+                param: null,
+                sequence_number: 0,
+                type: "error",
+              }),
+              event: "error",
+            },
+          ]),
+        )
+      }
+
+      return Promise.resolve(
+        streamChunks([
+          {
+            data: JSON.stringify({
+              response: {
+                created_at: 0,
+                error: null,
+                id: "resp-retry",
+                incomplete_details: null,
+                instructions: null,
+                metadata: null,
+                model: "gpt-test",
+                object: "response",
+                output: [],
+                output_text: "",
+                parallel_tool_calls: false,
+                status: "completed",
+                temperature: null,
+                usage: null,
+              },
+              sequence_number: 1,
+              type: "response.completed",
+            }),
+            event: "response.completed",
+          },
+        ]),
+      )
+    })
+
+    const app = createApp()
+    const response = await app.request("/v1/responses", {
+      body: JSON.stringify({
+        input: [
+          {
+            encrypted_content: "unverifiable-signature",
+            summary: [{ text: "Previous reasoning", type: "summary_text" }],
+            type: "reasoning",
+          },
+          { content: "Continue.", role: "user" },
+        ],
+        model: "gpt-test",
+        stream: true,
+      }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    })
+
+    expect(response.status).toBe(200)
+    const body = await response.text()
+    expect(body).toContain("response.completed")
+    expect(body).not.toContain("could not be decrypted")
+    expect(receivedInputs).toEqual([
+      [
+        {
+          encrypted_content: "unverifiable-signature",
+          summary: [{ text: "Previous reasoning", type: "summary_text" }],
+          type: "reasoning",
+        },
+        { content: "Continue.", role: "user" },
+      ],
+      [
+        {
+          summary: [{ text: "Previous reasoning", type: "summary_text" }],
+          type: "reasoning",
+        },
+        { content: "Continue.", role: "user" },
+      ],
     ])
   })
 

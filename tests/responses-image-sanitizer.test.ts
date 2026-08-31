@@ -7,6 +7,7 @@ import type {
 } from "~/lib/types/responses"
 
 import {
+  normalizeInputImageDetails,
   sanitizeAllInputImages,
   sanitizeOversizedInputImages,
 } from "~/routes/responses/utils"
@@ -140,5 +141,28 @@ describe("sanitizeOversizedInputImages", () => {
       toolOutputImage.image_url?.startsWith("data:image/png;base64,"),
     ).toBe(true)
     expect(toolOutputImage.image_url).not.toBe(toolImageUrl)
+  })
+})
+
+describe("normalizeInputImageDetails", () => {
+  test("converts Codex auto image detail to a Copilot-supported value", () => {
+    const payload = makePayload(tinyPngDataUrl)
+    const image = (
+      payload.input as Array<{ content: Array<ResponseInputImage> }>
+    )[0].content[1]
+    image.detail = "auto"
+
+    expect(normalizeInputImageDetails(payload)).toBe(1)
+    expect((image as { detail: string }).detail).toBe("low")
+  })
+
+  test("keeps Copilot-supported image detail values unchanged", () => {
+    const payload = makePayload(tinyPngDataUrl)
+
+    expect(normalizeInputImageDetails(payload)).toBe(0)
+    expect(
+      (payload.input as Array<{ content: Array<ResponseInputImage> }>)[0]
+        .content[1].detail,
+    ).toBe("low")
   })
 })

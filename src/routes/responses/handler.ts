@@ -32,12 +32,14 @@ import type {
 import { createResponses as createCopilotResponses } from "~/services/copilot/create-responses"
 
 import { handleResponsesViaMessages } from "./messages-handler"
+import { decodeMessagesCompaction } from "./messages-translation"
 import { createStreamIdTracker, fixStreamIds } from "./stream-id-sync"
 import {
   applyResponsesApiContextManagement,
   compactInputByLatestCompaction,
   getResponsesTransportForModel,
   getResponsesRequestOptions,
+  normalizeInputImageDetails,
   sanitizeOversizedInputImages,
   sanitizeUnsupportedInputFields,
 } from "./utils"
@@ -138,6 +140,20 @@ export const handleResponses = async (c: Context) => {
     )
   }
 
+  const normalizedImageDetailCount = normalizeInputImageDetails(payload)
+  if (normalizedImageDetailCount > 0) {
+    logger.debug(
+      `Normalized ${normalizedImageDetailCount} unsupported input image detail level(s) before forwarding to Copilot Responses`,
+    )
+  }
+
+  const replayedCompaction = replayMessagesCompactionForNativeResponses(payload)
+  if (replayedCompaction) {
+    logger.debug(
+      "Replayed a Messages-backed compaction instead of forwarding its local encrypted content to Copilot Responses",
+    )
+  }
+
   removeUnsupportedTools(payload)
   fillEmptyNamespaceToolDescriptions(payload)
 
@@ -175,53 +191,86 @@ export const handleResponses = async (c: Context) => {
     getResponsesRequestOptions(payload)
   const initiator = subagentMarker ? "agent" : inferredInitiator
 
-  const response = await responsesHandlerDependencies.createResponses(payload, {
-    vision,
-    initiator,
-    subagentMarker,
-    requestId,
-    sessionId: fallbackSessionId,
-    signal: c.req.raw.signal,
-    transport: responsesTransport,
-  })
+  const createNativeResponse = async () =>
+    await responsesHandlerDependencies.createResponses(payload, {
+      vision,
+      initiator,
+      subagentMarker,
+      requestId,
+      sessionId: fallbackSessionId,
+      signal: c.req.raw.signal,
+      transport: responsesTransport,
+    })
+
+  const response = await createNativeResponse()
 
   if (isStreamingRequested(payload) && isAsyncIterable(response)) {
     logger.debug("Forwarding native Responses stream")
     return streamSSE(c, async (stream) => {
       const idTracker = createStreamIdTracker()
       let usage: UsageTokens = {}
-      const iterator = response[Symbol.asyncIterator]()
+      let iterator = response[Symbol.asyncIterator]()
+
+      const forwardChunk = async (chunk: unknown): Promise<void> => {
+        debugJson(logger, "Responses stream chunk:", chunk)
+        const parsedEvent = parseResponsesStreamEvent(chunk)
+        if (
+          parsedEvent?.type === "response.completed"
+          || parsedEvent?.type === "response.failed"
+          || parsedEvent?.type === "response.incomplete"
+        ) {
+          usage = {
+            ...normalizeResponsesUsage(parsedEvent.response.usage),
+            total_nano_aiu: normalizeOptionalToken(
+              parsedEvent.copilot_usage?.total_nano_aiu,
+            ),
+          }
+        }
+
+        const streamChunk = chunk as {
+          data?: string
+          event?: string
+          id?: string
+        }
+        const processedData = fixStreamIds(
+          streamChunk.data ?? "",
+          streamChunk.event,
+          idTracker,
+        )
+
+        await stream.writeSSE({
+          id: streamChunk.id,
+          event: streamChunk.event,
+          data: processedData,
+        })
+      }
 
       try {
+        const first = await iterator.next()
+        if (
+          !first.done
+          && isEncryptedContentDecryptionError(
+            parseResponsesStreamEvent(first.value),
+          )
+          && removeInputReasoningEncryptedContent(payload) > 0
+        ) {
+          logger.warn(
+            "Retrying Responses stream without unverifiable reasoning encrypted content",
+          )
+          await iterator.return?.()
+          const retryResponse = await createNativeResponse()
+          if (!isAsyncIterable(retryResponse)) {
+            throw new Error("Responses retry did not return a stream")
+          }
+          iterator = retryResponse[Symbol.asyncIterator]()
+        } else if (!first.done) {
+          await forwardChunk(first.value)
+        }
+
         for await (const chunk of {
           [Symbol.asyncIterator]: () => iterator,
         }) {
-          debugJson(logger, "Responses stream chunk:", chunk)
-          const parsedEvent = parseResponsesStreamEvent(chunk)
-          if (
-            parsedEvent?.type === "response.completed"
-            || parsedEvent?.type === "response.failed"
-            || parsedEvent?.type === "response.incomplete"
-          ) {
-            usage = {
-              ...normalizeResponsesUsage(parsedEvent.response.usage),
-              total_nano_aiu: normalizeOptionalToken(
-                parsedEvent.copilot_usage?.total_nano_aiu,
-              ),
-            }
-          }
-
-          const processedData = fixStreamIds(
-            (chunk as { data?: string }).data ?? "",
-            (chunk as { event?: string }).event,
-            idTracker,
-          )
-
-          await stream.writeSSE({
-            id: (chunk as { id?: string }).id,
-            event: (chunk as { event?: string }).event,
-            data: processedData,
-          })
+          await forwardChunk(chunk)
         }
       } finally {
         await iterator.return?.()
@@ -246,6 +295,81 @@ export const handleResponses = async (c: Context) => {
 
 const isStreamingRequested = (payload: ResponsesPayload): boolean =>
   Boolean(payload.stream)
+
+const isEncryptedContentDecryptionError = (
+  event: ResponseStreamEvent | null,
+): boolean =>
+  event?.type === "error"
+  && event.message
+    .toLowerCase()
+    .includes("encrypted content could not be decrypted or parsed")
+
+const removeInputReasoningEncryptedContent = (
+  payload: ResponsesPayload,
+): number => {
+  if (!Array.isArray(payload.input)) return 0
+
+  let count = 0
+  for (const item of payload.input) {
+    if (
+      typeof item !== "object"
+      || item === null
+      || !("type" in item)
+      || item.type !== "reasoning"
+      || !("encrypted_content" in item)
+    ) {
+      continue
+    }
+
+    delete (item as unknown as Record<string, unknown>).encrypted_content
+    count += 1
+  }
+
+  return count
+}
+
+const MESSAGES_COMPACTION_REPLAY_PROMPT =
+  "The previous conversation was compacted. Continue from this handoff summary:\n\n"
+
+/**
+ * Messages fallback compactions are locally encoded summaries, not Copilot
+ * ciphertext. Replaying them as a developer message avoids sending bytes that
+ * Copilot cannot decrypt when a later request uses its native Responses API.
+ */
+const replayMessagesCompactionForNativeResponses = (
+  payload: ResponsesPayload,
+): boolean => {
+  if (!Array.isArray(payload.input)) return false
+
+  for (let index = payload.input.length - 1; index >= 0; index -= 1) {
+    const item = payload.input[index]
+    if (
+      typeof item !== "object"
+      || item === null
+      || !("type" in item)
+      || item.type !== "compaction"
+      || !("encrypted_content" in item)
+      || typeof item.encrypted_content !== "string"
+    ) {
+      continue
+    }
+
+    const summary = decodeMessagesCompaction(item.encrypted_content)
+    if (!summary) continue
+
+    payload.input = [
+      {
+        content: `${MESSAGES_COMPACTION_REPLAY_PROMPT}${summary}`,
+        role: "developer",
+        type: "message",
+      },
+      ...payload.input.slice(index + 1),
+    ]
+    return true
+  }
+
+  return false
+}
 
 const shouldFallbackToMessages = (
   c: Context,
