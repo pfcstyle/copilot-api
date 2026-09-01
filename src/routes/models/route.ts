@@ -14,6 +14,7 @@ import { forwardError } from "~/lib/error"
 import { createHandlerLogger } from "~/lib/logger"
 import { toClientModelId } from "~/lib/models"
 import { resolveProviderConfig } from "~/lib/provider-resolver"
+import { THINKING_ONLY_REASONING_EFFORTS } from "~/lib/reasoning-effort"
 import { state } from "~/lib/state"
 import type { Model } from "~/lib/types/models"
 import { getModels as getCodexModels } from "~/services/codex/get-models"
@@ -416,8 +417,20 @@ function createProviderCodexCandidate(
   const builtinReasoningEfforts = normalizeReasoningEfforts(
     builtinModelConfig?.reasoningEfforts,
   )
+  const isAliTokenPlan = providerConfig.baseUrl.includes("token-plan.")
+  const isArkCodingPlan = providerConfig.type === "ark-doubao"
+  const isThinkingOnlyProvider = isAliTokenPlan || isArkCodingPlan
+  // Aliyun Token Plan and Ark Coding Plan Responses endpoints are
+  // thinking-only. Keep the advertised Codex levels aligned with the request
+  // normalizer, which uses these values when no per-model capabilities are
+  // configured. Their remote model listings do not expose reliable reasoning
+  // metadata for this endpoint.
   const reasoningEfforts =
     configuredReasoningEfforts.length > 0 ? configuredReasoningEfforts
+    : isThinkingOnlyProvider ?
+      builtinReasoningEfforts.length > 0 ?
+        builtinReasoningEfforts
+      : [...THINKING_ONLY_REASONING_EFFORTS]
     : remoteReasoningEfforts.length > 0 ? remoteReasoningEfforts
     : builtinReasoningEfforts
   const configuredModalities = normalizeInputModalities(
@@ -475,7 +488,8 @@ function createProviderCodexCandidate(
     defaultReasoningEffort: selectDefaultReasoningEffort(
       reasoningEfforts,
       modelConfig?.defaultReasoningEffort
-        ?? builtinModelConfig?.defaultReasoningEffort,
+        ?? builtinModelConfig?.defaultReasoningEffort
+        ?? (isThinkingOnlyProvider ? "medium" : undefined),
     ),
   }
 }

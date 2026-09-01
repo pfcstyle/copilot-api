@@ -1,5 +1,16 @@
 import type { Reasoning } from "~/lib/types/responses"
 
+// Aliyun Token Plan and Ark Coding Plan models run in thinking mode. These
+// are the wire-level effort values that their Responses APIs accept; Codex's
+// client-only `ultra` tier is translated to `max` before forwarding.
+export const THINKING_ONLY_REASONING_EFFORTS = [
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+  "max",
+] as const
+
 export type ResponsesReasoningEffort = Exclude<
   Reasoning["effort"],
   null | undefined

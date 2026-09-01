@@ -2,6 +2,7 @@ import { builtinProviderModelRegistry } from "~/lib/builtin-provider-models"
 import type { ModelConfig, ResolvedProviderConfig } from "~/lib/config"
 import {
   resolveSupportedReasoningEffort,
+  THINKING_ONLY_REASONING_EFFORTS,
   type ResponsesReasoningEffort,
 } from "~/lib/reasoning-effort"
 import type { ResponsesPayload } from "~/lib/types/responses"
@@ -16,14 +17,6 @@ interface SamplingPayload {
 // always run in thinking mode. Their Responses APIs reject
 // `reasoning.effort: "none"` rather than treating it as a request for the
 // lowest thinking level.
-const THINKING_ONLY_RESPONSES_REASONING_EFFORTS = [
-  "low",
-  "medium",
-  "high",
-  "xhigh",
-  "max",
-] as const
-
 export const applyModelDefaults = (
   payload: SamplingPayload,
   modelConfig: ModelConfig | undefined,
@@ -73,7 +66,7 @@ export const normalizeProviderResponsesReasoningEffort = (
     )
     return thinkingOnlyEfforts && thinkingOnlyEfforts.length > 0 ?
         thinkingOnlyEfforts
-      : [...THINKING_ONLY_RESPONSES_REASONING_EFFORTS]
+      : [...THINKING_ONLY_REASONING_EFFORTS]
   })()
 
   const resolvedEffort = resolveSupportedReasoningEffort(

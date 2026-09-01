@@ -113,6 +113,23 @@ describe("ark-doubao provider type", () => {
     ).toEqual({ from: "none", to: "low" })
     expect(payload.reasoning?.effort).toBe("low")
   })
+
+  for (const effort of ["low", "medium", "high", "xhigh", "max"] as const) {
+    test(`preserves the selected ${effort} reasoning effort`, () => {
+      const payload: ResponsesPayload = {
+        model: "kimi-k2.7-code",
+        reasoning: { effort },
+      }
+
+      expect(
+        normalizeProviderResponsesReasoningEffort(
+          payload,
+          createArkProviderConfig(),
+        ),
+      ).toBeUndefined()
+      expect(payload.reasoning?.effort).toBe(effort)
+    })
+  }
 })
 
 describe("doubao curated model catalog", () => {

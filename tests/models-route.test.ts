@@ -890,6 +890,76 @@ describe("model routes", () => {
     }
   })
 
+  test("advertises medium as the default for Aliyun Token Plan models", async () => {
+    enabledProviders = ["ali"]
+    providerConfigs = {
+      ali: {
+        ...createProviderConfig(
+          "ali",
+          "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+        ),
+        type: "openai-responses",
+      },
+    }
+
+    const response = await createApp().request("/v1/models", {
+      headers: { "user-agent": "codex-cli/1.0.0" },
+    })
+
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as {
+      models: Array<Record<string, unknown> & { slug: string }>
+    }
+    expect(
+      body.models.find((model) => model.slug === "ali/qwen-plus"),
+    ).toMatchObject({
+      default_reasoning_level: "medium",
+      supported_reasoning_levels: [
+        { effort: "low", description: "low reasoning effort" },
+        { effort: "medium", description: "medium reasoning effort" },
+        { effort: "high", description: "high reasoning effort" },
+        { effort: "xhigh", description: "xhigh reasoning effort" },
+        { effort: "max", description: "max reasoning effort" },
+        { effort: "ultra", description: "ultra reasoning effort" },
+      ],
+    })
+  })
+
+  test("advertises Codex reasoning levels for Ark Coding Plan models", async () => {
+    enabledProviders = ["doubao"]
+    providerConfigs = {
+      doubao: {
+        ...createProviderConfig(
+          "doubao",
+          "https://ark.cn-beijing.volces.com/api/coding",
+        ),
+        type: "ark-doubao",
+      },
+    }
+
+    const response = await createApp().request("/v1/models", {
+      headers: { "user-agent": "codex-cli/1.0.0" },
+    })
+
+    expect(response.status).toBe(200)
+    const body = (await response.json()) as {
+      models: Array<Record<string, unknown> & { slug: string }>
+    }
+    expect(
+      body.models.find((model) => model.slug === "doubao/ark-code-latest"),
+    ).toMatchObject({
+      default_reasoning_level: "medium",
+      supported_reasoning_levels: [
+        { effort: "low", description: "low reasoning effort" },
+        { effort: "medium", description: "medium reasoning effort" },
+        { effort: "high", description: "high reasoning effort" },
+        { effort: "xhigh", description: "xhigh reasoning effort" },
+        { effort: "max", description: "max reasoning effort" },
+        { effort: "ultra", description: "ultra reasoning effort" },
+      ],
+    })
+  })
+
   test("adds ultra reasoning effort at the end when it is missing", async () => {
     const copilotModels = createCopilotModels(["gpt-5.6-sol"])
     copilotModels.data[0].supported_endpoints = ["/v1/messages"]

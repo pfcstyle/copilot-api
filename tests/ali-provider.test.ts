@@ -79,6 +79,23 @@ describe("Aliyun Token Plan provider", () => {
     expect(payload.reasoning?.effort).toBe("low")
   })
 
+  for (const effort of ["low", "medium", "high", "xhigh", "max"] as const) {
+    test(`preserves the selected ${effort} reasoning effort`, () => {
+      const payload: ResponsesPayload = {
+        model: "kimi-k2.7-code",
+        reasoning: { effort },
+      }
+
+      expect(
+        normalizeProviderResponsesReasoningEffort(
+          payload,
+          createAliProviderConfig(),
+        ),
+      ).toBeUndefined()
+      expect(payload.reasoning?.effort).toBe(effort)
+    })
+  }
+
   test("uses the same versioned base URL for models and chat completions", async () => {
     const captured = captureUpstreamUrl()
     await forwardProviderModels(createAliProviderConfig(), new Headers())
