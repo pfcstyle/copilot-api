@@ -12,6 +12,7 @@ import type { ChatCompletionsPayload } from "~/lib/types/chat-completions"
 import type { ResponsesPayload } from "~/lib/types/responses"
 import { getResponsesTransportConfig } from "~/lib/config"
 import { fetchResponsesWithLifecycle } from "~/services/responses-http"
+import { writeProviderDebugLog } from "~/lib/provider-debug-log"
 
 const SHARED_FORWARDABLE_HEADERS = ["accept", "user-agent"] as const
 
@@ -111,11 +112,29 @@ export async function forwardProviderMessages(
   requestHeaders: Headers,
 ): Promise<Response> {
   consola.log(`<-- model: ${payload.model}`)
-  return await fetch(buildProviderUpstreamUrl(providerConfig, "/messages"), {
+  const upstreamUrl = buildProviderUpstreamUrl(providerConfig, "/messages")
+  const response = await fetch(upstreamUrl, {
     method: "POST",
     headers: buildProviderUpstreamHeaders(providerConfig, requestHeaders),
     body: JSON.stringify(payload),
   })
+  if (!response.ok) {
+    const errorBody = await response
+      .clone()
+      .text()
+      .catch(() => "<unreadable>")
+    writeProviderDebugLog("provider_messages_upstream_error", {
+      status: response.status,
+      url: upstreamUrl,
+      model: payload.model,
+      max_tokens: payload.max_tokens,
+      message_count: payload.messages?.length,
+      system_chars:
+        typeof payload.system === "string" ? payload.system.length : undefined,
+      error_body: errorBody.slice(0, 2000),
+    })
+  }
+  return response
 }
 
 export async function forwardProviderChatCompletions(
@@ -142,8 +161,9 @@ export async function forwardProviderResponses(
 ): Promise<Response> {
   consola.log(`<-- model: ${payload.model}`)
   const transportConfig = getResponsesTransportConfig()
-  return await fetchResponsesWithLifecycle(
-    buildProviderUpstreamUrl(providerConfig, "/responses"),
+  const upstreamUrl = buildProviderUpstreamUrl(providerConfig, "/responses")
+  const response = await fetchResponsesWithLifecycle(
+    upstreamUrl,
     {
       method: "POST",
       headers: buildProviderUpstreamHeaders(providerConfig, requestHeaders),
@@ -155,6 +175,56 @@ export async function forwardProviderResponses(
       streamInactivityTimeoutMs: transportConfig.streamInactivityTimeoutMs,
     },
   )
+  if (!response.ok) {
+    const errorBody = await response
+      .clone()
+      .text()
+      .catch(() => "<unreadable>")
+    writeProviderDebugLog("provider_responses_upstream_error", {
+      status: response.status,
+      url: upstreamUrl,
+      model: payload.model,
+      max_output_tokens: payload.max_output_tokens,
+      reasoning: payload.reasoning ?? null,
+      store: payload.store,
+      stream: payload.stream,
+      input_items: Array.isArray(payload.input) ? payload.input.length : null,
+      input_item_shapes: getResponsesInputItemShapes(payload),
+      error_body: errorBody.slice(0, 2000),
+    })
+    consola.error(
+      `[provider-responses] upstream ${response.status} ${upstreamUrl} model=${payload.model} `
+        + `max_output_tokens=${String(payload.max_output_tokens)} `
+        + `reasoning=${JSON.stringify(payload.reasoning ?? null)} `
+        + `store=${String(payload.store)} stream=${String(payload.stream)} `
+        + `input_items=${Array.isArray(payload.input) ? payload.input.length : "n/a"} `
+        + `body=${errorBody.slice(0, 1000)}`,
+    )
+  }
+  return response
+}
+
+const getResponsesInputItemShapes = (
+  payload: ResponsesPayload,
+): Array<{
+  type: string | null
+  fields: Array<string>
+}> | null => {
+  if (!Array.isArray(payload.input)) {
+    return null
+  }
+
+  return payload.input.map((item) => {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) {
+      return { type: null, fields: [] }
+    }
+
+    const record = item as Record<string, unknown>
+    return {
+      type: typeof record.type === "string" ? record.type : null,
+      fields: Object.keys(record).sort(),
+    }
+  })
 }
 
 const PROVIDER_MODELS_TIMEOUT_MS = 15_000

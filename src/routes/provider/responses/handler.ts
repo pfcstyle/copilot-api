@@ -23,6 +23,8 @@ import { isCodexUserAgent } from "~/routes/models/codex-models"
 import {
   applyResponsesApiContextManagement,
   compactInputByLatestCompaction,
+  removeUnlinkedToolCallOutputs,
+  sanitizeProviderUnsupportedInputFields,
 } from "~/routes/responses/utils"
 import { handleResponsesViaMessages } from "~/routes/responses/messages-handler"
 import { normalizeProviderResponsesReasoningEffort } from "~/routes/provider/utils"
@@ -89,6 +91,21 @@ export async function handleProviderResponsesForProvider(
   if (normalizedReasoningEffort) {
     logger.debug(
       `Normalized reasoning effort from ${normalizedReasoningEffort.from} to ${normalizedReasoningEffort.to} based on the provider model configuration`,
+    )
+  }
+
+  const removedToolOutputCount = removeUnlinkedToolCallOutputs(payload)
+  if (removedToolOutputCount > 0) {
+    logger.warn(
+      `Omitted ${removedToolOutputCount} unlinked tool result(s) before forwarding provider Responses request`,
+    )
+  }
+
+  const removedUnsupportedFieldCount =
+    sanitizeProviderUnsupportedInputFields(payload)
+  if (removedUnsupportedFieldCount > 0) {
+    logger.debug(
+      `Removed ${removedUnsupportedFieldCount} unsupported input field(s) before forwarding provider Responses request`,
     )
   }
 

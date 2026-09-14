@@ -143,8 +143,42 @@ const COPILOT_UNSUPPORTED_INPUT_ITEM_FIELDS = [
   "internal_chat_message_metadata_passthrough",
 ] as const
 
+const PROVIDER_UNSUPPORTED_INPUT_ITEM_FIELDS = [
+  "internal_chat_message_metadata_passthrough",
+  "phase",
+] as const
+
 export const sanitizeUnsupportedInputFields = (
   payload: ResponsesPayload,
+): number => {
+  return removeUnsupportedInputFields(
+    payload,
+    COPILOT_UNSUPPORTED_INPUT_ITEM_FIELDS,
+  )
+}
+
+/** Remove Codex-only fields that are not part of the public Responses schema. */
+export const sanitizeProviderUnsupportedInputFields = (
+  payload: ResponsesPayload,
+): number => {
+  const removedFieldCount = removeUnsupportedInputFields(
+    payload,
+    PROVIDER_UNSUPPORTED_INPUT_ITEM_FIELDS,
+  )
+  if (!Array.isArray(payload.input)) {
+    return removedFieldCount
+  }
+
+  const originalLength = payload.input.length
+  payload.input = payload.input.filter(
+    (item) => !isResponseInputItemType(item, "reasoning"),
+  )
+  return removedFieldCount + originalLength - payload.input.length
+}
+
+const removeUnsupportedInputFields = (
+  payload: ResponsesPayload,
+  fields: ReadonlyArray<string>,
 ): number => {
   if (!Array.isArray(payload.input)) {
     return 0
@@ -157,7 +191,7 @@ export const sanitizeUnsupportedInputFields = (
     }
 
     const record = item as Record<string, unknown>
-    for (const field of COPILOT_UNSUPPORTED_INPUT_ITEM_FIELDS) {
+    for (const field of fields) {
       if (!Object.hasOwn(record, field)) {
         continue
       }
@@ -168,6 +202,33 @@ export const sanitizeUnsupportedInputFields = (
   }
 
   return removedFieldCount
+}
+
+/**
+ * A Responses tool result is only valid when it identifies the originating
+ * tool call. Codex can leave behind an orphaned result after an interrupted
+ * delegated turn. It cannot be safely associated with a call, so omit it
+ * rather than inventing an id that an upstream provider will reject.
+ */
+export const removeUnlinkedToolCallOutputs = (
+  payload: ResponsesPayload,
+): number => {
+  if (!Array.isArray(payload.input)) {
+    return 0
+  }
+
+  const originalLength = payload.input.length
+  payload.input = payload.input.filter((item) => {
+    if (
+      !isResponseFunctionCallOutputItem(item)
+      || (typeof item.call_id === "string" && item.call_id.trim().length > 0)
+    ) {
+      return true
+    }
+
+    return false
+  })
+  return originalLength - payload.input.length
 }
 
 export const sanitizeOversizedInputImages = (
