@@ -1756,7 +1756,7 @@ describe("responses handler token usage", () => {
     ])
   })
 
-  test("retries an initial encrypted-content stream error without reasoning signatures", async () => {
+  test("retries an initial encrypted-content stream error without stale encrypted history", async () => {
     const receivedInputs: Array<unknown> = []
     createResponses.mockImplementation((payload) => {
       receivedInputs.push(structuredClone(payload.input))
@@ -1815,6 +1815,11 @@ describe("responses handler token usage", () => {
             summary: [{ text: "Previous reasoning", type: "summary_text" }],
             type: "reasoning",
           },
+          {
+            encrypted_content: "unverifiable-compaction",
+            id: "compaction-old-model",
+            type: "compaction",
+          },
           { content: "Continue.", role: "user" },
         ],
         model: "gpt-test",
@@ -1835,15 +1840,14 @@ describe("responses handler token usage", () => {
           summary: [{ text: "Previous reasoning", type: "summary_text" }],
           type: "reasoning",
         },
-        { content: "Continue.", role: "user" },
-      ],
-      [
         {
-          summary: [{ text: "Previous reasoning", type: "summary_text" }],
-          type: "reasoning",
+          encrypted_content: "unverifiable-compaction",
+          id: "compaction-old-model",
+          type: "compaction",
         },
         { content: "Continue.", role: "user" },
       ],
+      [{ content: "Continue.", role: "user" }],
     ])
   })
 

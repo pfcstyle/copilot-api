@@ -268,10 +268,10 @@ export const handleResponses = async (c: Context) => {
           && isEncryptedContentDecryptionError(
             parseResponsesStreamEvent(first.value),
           )
-          && removeInputReasoningEncryptedContent(payload) > 0
+          && removeInputEncryptedHistoryItems(payload) > 0
         ) {
           logger.warn(
-            "Retrying Responses stream without unverifiable reasoning encrypted content",
+            "Retrying Responses stream without history items containing unverifiable encrypted content",
           )
           await iterator.return?.()
           const retryResponse = await createNativeResponse()
@@ -320,28 +320,21 @@ const isEncryptedContentDecryptionError = (
     .toLowerCase()
     .includes("encrypted content could not be decrypted or parsed")
 
-const removeInputReasoningEncryptedContent = (
+const removeInputEncryptedHistoryItems = (
   payload: ResponsesPayload,
 ): number => {
   if (!Array.isArray(payload.input)) return 0
 
-  let count = 0
-  for (const item of payload.input) {
-    if (
+  const originalLength = payload.input.length
+  payload.input = payload.input.filter(
+    (item) =>
       typeof item !== "object"
       || item === null
       || !("type" in item)
-      || item.type !== "reasoning"
-      || !("encrypted_content" in item)
-    ) {
-      continue
-    }
-
-    delete (item as unknown as Record<string, unknown>).encrypted_content
-    count += 1
-  }
-
-  return count
+      || (item.type !== "reasoning" && item.type !== "compaction")
+      || !("encrypted_content" in item),
+  )
+  return originalLength - payload.input.length
 }
 
 const MESSAGES_COMPACTION_REPLAY_PROMPT =
