@@ -44,6 +44,8 @@ import {
   getResponsesRequestOptions,
   normalizeInputImageDetails,
   normalizeResponsesReasoningEffort,
+  removeUnlinkedToolCallOutputs,
+  sanitizeProviderUnsupportedInputFields,
   sanitizeOversizedInputImages,
   sanitizeUnsupportedInputFields,
 } from "./utils"
@@ -68,11 +70,25 @@ export const handleResponses = async (c: Context) => {
     )
   }
 
+  const removedToolOutputCount = removeUnlinkedToolCallOutputs(payload)
+  if (removedToolOutputCount > 0) {
+    logger.warn(
+      `Omitted ${removedToolOutputCount} unlinked tool result(s) before forwarding the Responses request`,
+    )
+  }
+
   const providerModelAlias = await resolveConfiguredProviderModelAlias(
     payload.model,
     providerResponsesHandlerDependencies.resolveProviderConfig,
   )
   if (providerModelAlias) {
+    const removedProviderInputCount =
+      sanitizeProviderUnsupportedInputFields(payload)
+    if (removedProviderInputCount > 0) {
+      logger.debug(
+        `Removed ${removedProviderInputCount} unsupported input field(s) before resolving the provider Responses request`,
+      )
+    }
     payload.model = providerModelAlias.model
     return await handleProviderResponsesForProvider(c, {
       payload,

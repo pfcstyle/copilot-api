@@ -140,6 +140,71 @@ afterEach(async () => {
 })
 
 describe("provider Responses context management", () => {
+  test("drops an unlinked tool output before forwarding to a provider", async () => {
+    const app = createApp()
+    const response = await app.request("/v1/responses", {
+      body: JSON.stringify({
+        input: [
+          { content: "Continue", role: "user", type: "message" },
+          {
+            id: "fco_orphaned",
+            internal_chat_message_metadata_passthrough: { turn_id: "turn-1" },
+            name: "send_message_to_thread",
+            output: "Continue",
+            type: "function_call_output",
+          },
+        ],
+        model: "openai/gpt-test",
+      }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    })
+
+    expect(response.status).toBe(200)
+    const [, init] = fetchMock.mock.calls[0]
+    const body = parseJsonRequestBody((init as RequestInit).body) as {
+      input: Array<unknown>
+    }
+    expect(body.input).toEqual([
+      { content: "Continue", role: "user", type: "message" },
+    ])
+  })
+
+  test("removes Codex-only input metadata before forwarding to a provider", async () => {
+    const app = createApp()
+    const response = await app.request("/v1/responses", {
+      body: JSON.stringify({
+        input: [
+          {
+            content: "Continue",
+            internal_chat_message_metadata_passthrough: { turn_id: "turn-1" },
+            phase: "commentary",
+            role: "user",
+            type: "message",
+          },
+          {
+            encrypted_content: "not-portable",
+            id: "reasoning-1",
+            summary: [],
+            type: "reasoning",
+          },
+        ],
+        model: "openai/gpt-test",
+      }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    })
+
+    expect(response.status).toBe(200)
+    const [, init] = fetchMock.mock.calls[0]
+    const body = parseJsonRequestBody((init as RequestInit).body) as {
+      input: Array<unknown>
+    }
+    expect(body.input).toEqual([
+      { content: "Continue", role: "user", type: "message" },
+    ])
+  })
+
   test("does not add context management or compact provider Responses input by default", async () => {
     const app = createApp()
     const response = await app.request("/v1/responses", {
