@@ -5,16 +5,19 @@ import {
 } from "undici"
 
 import type { ResolvedProviderConfig } from "~/lib/config"
-import { getProviderApiPathPrefix } from "~/lib/config"
+import {
+  getProviderApiPathPrefix,
+  getResponsesTransportConfig,
+} from "~/lib/config"
+import { createHandlerLogger } from "~/lib/logger"
 import { createTimeoutDispatcher } from "~/lib/timeout-dispatcher"
 import type { AnthropicMessagesPayload } from "~/lib/types/anthropic"
 import type { ChatCompletionsPayload } from "~/lib/types/chat-completions"
 import type { ResponsesPayload } from "~/lib/types/responses"
-import { getResponsesTransportConfig } from "~/lib/config"
 import { fetchResponsesWithLifecycle } from "~/services/responses-http"
-import { writeProviderDebugLog } from "~/lib/provider-debug-log"
 
 const SHARED_FORWARDABLE_HEADERS = ["accept", "user-agent"] as const
+const logger = createHandlerLogger("provider-proxy")
 
 /**
  * Upstream URL for a provider endpoint. The path prefix depends on the
@@ -123,7 +126,7 @@ export async function forwardProviderMessages(
       .clone()
       .text()
       .catch(() => "<unreadable>")
-    writeProviderDebugLog("provider_messages_upstream_error", {
+    logger.error("provider_messages_upstream_error", {
       status: response.status,
       url: upstreamUrl,
       model: payload.model,
@@ -180,7 +183,7 @@ export async function forwardProviderResponses(
       .clone()
       .text()
       .catch(() => "<unreadable>")
-    writeProviderDebugLog("provider_responses_upstream_error", {
+    logger.error("provider_responses_upstream_error", {
       status: response.status,
       url: upstreamUrl,
       model: payload.model,
