@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test"
 import { Hono, type Context } from "hono"
 
+import { COMPACT_REQUEST } from "~/lib/compact"
 import type { AnthropicMessagesPayload } from "~/lib/types/anthropic"
 import type { CompletionPayloadOptions } from "~/routes/messages/handler"
 import { MESSAGES_TOOL_CALL_TIPS } from "~/routes/responses/messages-translation"
@@ -699,6 +700,43 @@ describe("responses handler token usage", () => {
     expect(createResponses.mock.calls[0][1]?.transport).toBe("websocket")
     expect(createResponses.mock.calls[0][1]?.initiator).toBe("user")
     expect(createResponses.mock.calls[0][1]?.subagentMarker).toBeNull()
+  })
+
+  test("uses HTTP transport for explicit compaction requests", async () => {
+    state.models = {
+      object: "list",
+      data: [
+        {
+          capabilities: {
+            limits: {
+              max_prompt_tokens: 128000,
+            },
+          },
+          id: "gpt-test",
+          supported_endpoints: ["/responses", "ws:/responses"],
+        },
+      ],
+    } as typeof state.models
+    createResponses.mockImplementation((payload) =>
+      Promise.resolve(createResponsesResult(payload.model)),
+    )
+
+    const response = await createApp().request("/v1/responses", {
+      body: JSON.stringify({
+        input: [
+          { content: "Summarize the session.", role: "user" },
+          { type: "compaction_trigger" },
+        ],
+        model: "gpt-test",
+      }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    })
+
+    expect(response.status).toBe(200)
+    expect(createResponses).toHaveBeenCalledTimes(1)
+    expect(createResponses.mock.calls[0][1]?.compactType).toBe(COMPACT_REQUEST)
+    expect(createResponses.mock.calls[0][1]?.transport).toBe("http")
   })
 
   test("keeps HTTP transport for dual-endpoint models when websocket is disabled", async () => {
@@ -1948,6 +1986,39 @@ describe("responses handler token usage", () => {
 })
 
 describe("responses handler interrupted streams", () => {
+  test("delivers an error event when a native stream ends without a terminal event", async () => {
+    createResponses.mockImplementation(() =>
+      Promise.resolve(
+        streamChunks([
+          {
+            data: JSON.stringify({
+              response: createResponsesResult("gpt-test"),
+              sequence_number: 0,
+              type: "response.created",
+            }),
+            event: "response.created",
+          },
+        ]),
+      ),
+    )
+
+    const response = await createApp().request("/v1/responses", {
+      body: JSON.stringify({
+        input: "hello",
+        model: "gpt-test",
+        stream: true,
+      }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    })
+
+    expect(response.status).toBe(200)
+    const body = await response.text()
+    expect(body).toContain("response.created")
+    expect(body).toContain("event: error")
+    expect(body).toContain("ended before a terminal event")
+  })
+
   test("delivers failure events when the Messages stream ends before initialization", async () => {
     state.models = {
       object: "list",

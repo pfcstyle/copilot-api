@@ -6,6 +6,7 @@ import {
   isResponsesApiWebSearchEnabled as isConfiguredResponsesApiWebSearchEnabled,
   resolveMappedModel,
 } from "~/lib/config"
+import { COMPACT_REQUEST } from "~/lib/compact"
 import { createHandlerLogger, debugJson, debugJsonTail } from "~/lib/logger"
 import { findEndpointModel } from "~/lib/models"
 import { resolveConfiguredProviderModelAlias } from "~/lib/provider-resolver"
@@ -33,6 +34,10 @@ import type {
   ResponseStreamEvent,
 } from "~/lib/types/responses"
 import { createResponses as createCopilotResponses } from "~/services/copilot/create-responses"
+import {
+  createResponsesErrorServerSentEventChunk,
+  isTerminalResponsesStreamChunk,
+} from "~/services/responses-websocket-helpers"
 
 import { handleResponsesViaMessages } from "./messages-handler"
 import { decodeMessagesCompaction } from "./messages-translation"
@@ -42,6 +47,7 @@ import {
   compactInputByLatestCompaction,
   getResponsesTransportForModel,
   getResponsesRequestOptions,
+  hasTerminalCompactionTrigger,
   normalizeInputImageDetails,
   normalizeResponsesReasoningEffort,
   removeUnlinkedToolCallOutputs,
@@ -127,7 +133,11 @@ export const handleResponses = async (c: Context) => {
       `Normalized reasoning effort from ${normalizedReasoningEffort.from} to ${normalizedReasoningEffort.to} based on the selected model capabilities`,
     )
   }
-  const responsesTransport = getResponsesTransportForModel(selectedModel)
+  const compactType =
+    hasTerminalCompactionTrigger(payload) ? COMPACT_REQUEST : undefined
+  const responsesTransport = getResponsesTransportForModel(selectedModel, {
+    compactType,
+  })
 
   const useMessagesFallback = shouldFallbackToMessages(
     c,
@@ -231,6 +241,7 @@ export const handleResponses = async (c: Context) => {
       requestId,
       sessionId: fallbackSessionId,
       signal: c.req.raw.signal,
+      compactType,
       transport: responsesTransport,
     })
 
@@ -241,6 +252,7 @@ export const handleResponses = async (c: Context) => {
     return streamSSE(c, async (stream) => {
       const idTracker = createStreamIdTracker()
       let usage: UsageTokens = {}
+      let terminalEventReceived = false
       let iterator = response[Symbol.asyncIterator]()
 
       const forwardChunk = async (chunk: unknown): Promise<void> => {
@@ -264,6 +276,7 @@ export const handleResponses = async (c: Context) => {
           event?: string
           id?: string
         }
+        terminalEventReceived ||= isTerminalResponsesStreamChunk(streamChunk)
         const processedData = fixStreamIds(
           streamChunk.data ?? "",
           streamChunk.event,
@@ -303,6 +316,17 @@ export const handleResponses = async (c: Context) => {
           [Symbol.asyncIterator]: () => iterator,
         }) {
           await forwardChunk(chunk)
+        }
+
+        if (!terminalEventReceived && !c.req.raw.signal.aborted) {
+          logger.warn("Responses stream ended without a terminal event")
+          const errorChunk = createResponsesErrorServerSentEventChunk(
+            "Responses stream ended before a terminal event was received. Retry the request.",
+          )
+          await stream.writeSSE({
+            event: errorChunk.event,
+            data: errorChunk.data ?? "",
+          })
         }
       } finally {
         await iterator.return?.()
