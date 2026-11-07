@@ -35,7 +35,7 @@ import type {
 import { createResponses as createCopilotResponses } from "~/services/copilot/create-responses"
 
 import { handleResponsesViaMessages } from "./messages-handler"
-import { decodeMessagesCompaction } from "./messages-translation"
+import { replayMessagesCompactionForNativeResponses } from "./compaction-replay"
 import { createStreamIdTracker, fixStreamIds } from "./stream-id-sync"
 import {
   applyResponsesApiContextManagement,
@@ -351,49 +351,6 @@ const removeInputEncryptedHistoryItems = (
       || !("encrypted_content" in item),
   )
   return originalLength - payload.input.length
-}
-
-const MESSAGES_COMPACTION_REPLAY_PROMPT =
-  "The previous conversation was compacted. Continue from this handoff summary:\n\n"
-
-/**
- * Messages fallback compactions are locally encoded summaries, not Copilot
- * ciphertext. Replaying them as a developer message avoids sending bytes that
- * Copilot cannot decrypt when a later request uses its native Responses API.
- */
-const replayMessagesCompactionForNativeResponses = (
-  payload: ResponsesPayload,
-): boolean => {
-  if (!Array.isArray(payload.input)) return false
-
-  for (let index = payload.input.length - 1; index >= 0; index -= 1) {
-    const item = payload.input[index]
-    if (
-      typeof item !== "object"
-      || item === null
-      || !("type" in item)
-      || item.type !== "compaction"
-      || !("encrypted_content" in item)
-      || typeof item.encrypted_content !== "string"
-    ) {
-      continue
-    }
-
-    const summary = decodeMessagesCompaction(item.encrypted_content)
-    if (!summary) continue
-
-    payload.input = [
-      {
-        content: `${MESSAGES_COMPACTION_REPLAY_PROMPT}${summary}`,
-        role: "developer",
-        type: "message",
-      },
-      ...payload.input.slice(index + 1),
-    ]
-    return true
-  }
-
-  return false
 }
 
 const shouldFallbackToMessages = (

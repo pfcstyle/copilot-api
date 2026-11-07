@@ -117,7 +117,7 @@ export interface ResponseInputMessage {
   role: "user" | "assistant" | "system" | "developer"
   content?: string | Array<ResponseInputContent>
   status?: string
-  phase?: "commentary" | "final_answer"
+  phase?: "commentary" | "final_answer" | null
 }
 
 export interface ResponseInputAgentMessage {
@@ -304,6 +304,7 @@ export interface ResponseOutputMessage {
   role: "assistant"
   status: "completed" | "in_progress" | "incomplete"
   content?: Array<ResponseOutputContentBlock>
+  phase?: "commentary" | "final_answer"
 }
 
 export interface ResponseOutputReasoning {

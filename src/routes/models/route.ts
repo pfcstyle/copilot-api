@@ -3,6 +3,7 @@ import { Hono } from "hono"
 import {
   listEnabledProviders,
   isResponsesProviderType,
+  resolveCodexResponsesMode,
   resolveEffectiveProviderType,
   type CodexReasoningEffort,
   type ModelConfig,
@@ -393,9 +394,14 @@ function isMessagesFallbackProviderType(type: ProviderType): boolean {
   return type === "anthropic" || type === "openai-compatible"
 }
 
-function describeProviderAdapter(type: ProviderType): string {
+function describeProviderAdapter(
+  type: ProviderType,
+  mode: "direct" | "messages",
+): string {
   if (type === "anthropic") return "Messages"
-  if (isResponsesProviderType(type)) return "Messages-to-Responses"
+  if (isResponsesProviderType(type)) {
+    return mode === "direct" ? "Responses" : "Messages-to-Responses"
+  }
   return "Messages-to-Chat"
 }
 
@@ -446,11 +452,15 @@ function createProviderCodexCandidate(
     getStringField(remoteModel ?? {}, "display_name")
     ?? getStringField(remoteModel ?? {}, "name")
     ?? modelId
-  const adapterName = describeProviderAdapter(effectiveType)
-  // Codex clients only drive gpt-* models through the native Responses API;
-  // other Responses-capable models fall back to the Messages adapter (see
-  // shouldFallbackToMessages), so only gpt-* models require upstream catalog
-  // metadata and the rest can be synthesized like Messages-fallback models.
+  const codexResponsesMode = resolveCodexResponsesMode(
+    providerConfig,
+    modelId,
+    effectiveType,
+  )
+  const adapterName = describeProviderAdapter(effectiveType, codexResponsesMode)
+  // GPT provider aliases still use upstream Codex catalog metadata when it is
+  // available. Other provider models can be represented by synthetic catalog
+  // entries whether they use direct Responses or the explicit Messages mode.
   const requiresCatalogMatch =
     isResponsesProviderType(effectiveType) && modelId.startsWith("gpt")
 

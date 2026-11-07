@@ -94,7 +94,7 @@ export function buildProviderUpstreamHeaders(
 
 export function createProviderProxyResponse(
   upstreamResponse: Response,
-  body?: ReadableStream<Uint8Array> | null,
+  body?: ReadableStream<Uint8Array> | string | null,
 ): Response {
   const headers = new Headers(upstreamResponse.headers)
 

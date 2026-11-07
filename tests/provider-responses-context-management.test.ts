@@ -22,6 +22,9 @@ const { responsesHandlerDependencies } = await import(
   "~/routes/responses/handler"
 )
 const { responsesUtilsDependencies } = await import("~/routes/responses/utils")
+const { decodeMessagesCompaction, encodeMessagesCompaction } = await import(
+  "~/routes/responses/messages-translation"
+)
 
 const defaultProviderMessagesHandlerDependencies = {
   ...providerMessagesHandlerDependencies,
@@ -356,6 +359,7 @@ describe("provider Responses context management", () => {
       },
       name: "opencode-go",
       type: "openai-responses",
+      codexResponsesMode: "messages",
     }
 
     const app = createApp()
@@ -635,6 +639,536 @@ describe("provider Responses context management", () => {
     expect(body.reasoning?.effort).toBe("medium")
   })
 
+  test("directly preserves Responses Lite tools for provider and alias routes", async () => {
+    providerConfig = {
+      apiKey: "provider-key",
+      authType: "authorization",
+      baseUrl:
+        "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
+      models: { "glm-5.3": {} },
+      name: "ali",
+      type: "openai-responses",
+    }
+
+    for (const [path, model] of [
+      ["/ali/v1/responses", "glm-5.3"],
+      ["/v1/responses", "ali/glm-5.3"],
+    ] as const) {
+      const response = await createApp().request(path, {
+        body: JSON.stringify({
+          input: [
+            {
+              role: "developer",
+              tools: [
+                { name: "apply_patch", type: "custom" },
+                {
+                  name: "workspace",
+                  tools: [
+                    {
+                      name: "read_file",
+                      parameters: { type: "object" },
+                      strict: false,
+                      type: "function",
+                    },
+                  ],
+                  type: "namespace",
+                },
+              ],
+              type: "additional_tools",
+            },
+            { content: "Inspect and patch", role: "user", type: "message" },
+          ],
+          model,
+          parallel_tool_calls: false,
+          tools: [
+            { name: "apply_patch", type: "custom" },
+            {
+              name: "workspace",
+              tools: [
+                {
+                  name: "read_file",
+                  parameters: { type: "object" },
+                  strict: false,
+                  type: "function",
+                },
+              ],
+              type: "namespace",
+            },
+          ],
+        }),
+        headers: {
+          "content-type": "application/json",
+          "user-agent": "codex-cli/1.0.0",
+        },
+        method: "POST",
+      })
+
+      expect(response.status).toBe(200)
+      const [, init] = fetchMock.mock.calls.at(-1)!
+      const body = parseJsonRequestBody(init?.body) as {
+        input: Array<Record<string, unknown>>
+        model: string
+        parallel_tool_calls: boolean
+        tools: Array<Record<string, unknown>>
+      }
+      expect(body.model).toBe("glm-5.3")
+      expect(body.parallel_tool_calls).toBe(false)
+      expect(body.input[0]).toMatchObject({
+        role: "developer",
+        type: "additional_tools",
+      })
+      expect(body.tools.map((tool) => tool.type)).toEqual([
+        "custom",
+        "namespace",
+      ])
+    }
+  })
+
+  test("uses model Responses mode before provider mode", async () => {
+    providerConfig = {
+      apiKey: "provider-key",
+      authType: "authorization",
+      baseUrl: "https://openai-responses.example",
+      codexResponsesMode: "messages",
+      models: {
+        direct: { codexResponsesMode: "direct" },
+        fallback: { codexResponsesMode: "messages" },
+      },
+      name: "openai",
+      type: "openai-responses",
+    }
+
+    const request = (model: string) =>
+      createApp().request("/openai/v1/responses", {
+        body: JSON.stringify({
+          input: [
+            {
+              role: "developer",
+              tools: [{ name: "apply_patch", type: "custom" }],
+              type: "additional_tools",
+            },
+            { content: "Patch it", role: "user", type: "message" },
+          ],
+          model,
+        }),
+        headers: {
+          "content-type": "application/json",
+          "user-agent": "codex-cli/1.0.0",
+        },
+        method: "POST",
+      })
+
+    expect((await request("direct")).status).toBe(200)
+    let [, init] = fetchMock.mock.calls.at(-1)!
+    let body = parseJsonRequestBody(init?.body) as {
+      input: Array<Record<string, unknown>>
+    }
+    expect(body.input[0]?.type).toBe("additional_tools")
+
+    providerConfig.codexResponsesMode = "direct"
+    expect((await request("fallback")).status).toBe(200)
+    ;[, init] = fetchMock.mock.calls.at(-1)!
+    body = parseJsonRequestBody(init?.body) as {
+      input: Array<Record<string, unknown>>
+    }
+    expect(body.input.some((item) => item.type === "additional_tools")).toBe(
+      false,
+    )
+  })
+
+  test("creates Codex compactions locally for direct third-party Responses providers", async () => {
+    providerConfig = {
+      apiKey: "provider-key",
+      authType: "authorization",
+      baseUrl: "https://openai-responses.example",
+      codexResponsesMode: "direct",
+      models: { "glm-5.3": {} },
+      name: "ali",
+      type: "openai-responses",
+    }
+    fetchMock.mockImplementation((_url, init) => {
+      const requestBody = parseJsonRequestBody(init?.body) as {
+        input: Array<Record<string, unknown>>
+        model: string
+      }
+      expect(
+        requestBody.input.some((item) => item.type === "compaction_trigger"),
+      ).toBe(false)
+      expect(JSON.stringify(requestBody.input)).toContain(
+        "CONTEXT CHECKPOINT COMPACTION",
+      )
+
+      return Promise.resolve(
+        Response.json({
+          ...createResponsesResult(requestBody.model),
+          output: [
+            {
+              content: [
+                {
+                  annotations: [],
+                  text: "Current progress and verified next steps",
+                  type: "output_text",
+                },
+              ],
+              id: "msg-summary",
+              role: "assistant",
+              status: "completed",
+              type: "message",
+            },
+          ],
+          output_text: "Current progress and verified next steps",
+        }),
+      )
+    })
+
+    for (const [path, model] of [
+      ["/ali/v1/responses", "glm-5.3"],
+      ["/v1/responses", "ali/glm-5.3"],
+    ] as const) {
+      const response = await createApp().request(path, {
+        body: JSON.stringify({
+          input: [
+            {
+              content: "Implement the feature",
+              role: "user",
+              type: "message",
+            },
+            { type: "compaction_trigger" },
+          ],
+          model,
+        }),
+        headers: {
+          "content-type": "application/json",
+          "user-agent": "codex-cli/1.0.0",
+        },
+        method: "POST",
+      })
+
+      expect(response.status).toBe(200)
+      const body = (await response.json()) as ResponsesResult
+      expect(body.output).toHaveLength(1)
+      expect(body.output[0]?.type).toBe("compaction")
+      if (body.output[0]?.type === "compaction") {
+        expect(decodeMessagesCompaction(body.output[0].encrypted_content)).toBe(
+          "Current progress and verified next steps",
+        )
+      }
+    }
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  test("streams local Codex compactions for direct third-party Responses providers", async () => {
+    providerConfig = {
+      apiKey: "provider-key",
+      authType: "authorization",
+      baseUrl: "https://openai-responses.example",
+      models: { "glm-5.3": {} },
+      name: "ali",
+      type: "openai-responses",
+    }
+    const summary = "Streamed progress and next steps"
+    fetchMock.mockImplementation((_url, init) => {
+      const requestBody = parseJsonRequestBody(init?.body) as {
+        input: Array<Record<string, unknown>>
+        model: string
+        stream?: boolean
+      }
+      expect(requestBody.stream).toBe(true)
+      expect(
+        requestBody.input.some((item) => item.type === "compaction_trigger"),
+      ).toBe(false)
+
+      const createdResponse = {
+        ...createResponsesResult(requestBody.model),
+        status: "in_progress",
+      }
+      const completedResponse = {
+        ...createResponsesResult(requestBody.model),
+        output: [
+          {
+            content: [
+              {
+                annotations: [],
+                text: summary,
+                type: "output_text",
+              },
+            ],
+            id: "msg-stream-summary",
+            role: "assistant",
+            status: "completed",
+            type: "message",
+          },
+        ],
+        output_text: summary,
+      }
+      const streamEvents = [
+        {
+          response: createdResponse,
+          sequence_number: 0,
+          type: "response.created",
+        },
+        {
+          content_index: 0,
+          delta: summary,
+          item_id: "msg-stream-summary",
+          output_index: 0,
+          sequence_number: 1,
+          type: "response.output_text.delta",
+        },
+        {
+          response: completedResponse,
+          sequence_number: 2,
+          type: "response.completed",
+        },
+      ]
+
+      return Promise.resolve(
+        new Response(
+          streamEvents
+            .map(
+              (event) =>
+                `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`,
+            )
+            .join("") + "data: [DONE]\n\n",
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+      )
+    })
+
+    const response = await createApp().request("/ali/v1/responses", {
+      body: JSON.stringify({
+        input: [
+          { content: "Implement the feature", role: "user", type: "message" },
+          { type: "compaction_trigger" },
+        ],
+        model: "glm-5.3",
+        stream: true,
+      }),
+      headers: {
+        "content-type": "application/json",
+        "user-agent": "codex-cli/1.0.0",
+      },
+      method: "POST",
+    })
+
+    expect(response.status).toBe(200)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const events = (await response.text())
+      .split("\n")
+      .filter((line) => line.startsWith("data: "))
+      .map((line) => line.slice(6))
+      .filter((data) => data !== "[DONE]")
+      .map((data) => JSON.parse(data) as Record<string, unknown>)
+    const compactionDone = events.find(
+      (event) =>
+        event.type === "response.output_item.done"
+        && (event.item as { type?: string } | undefined)?.type === "compaction",
+    )
+
+    expect(compactionDone).toBeDefined()
+    const compaction = compactionDone?.item as
+      | { encrypted_content?: string }
+      | undefined
+    expect(decodeMessagesCompaction(compaction?.encrypted_content ?? "")).toBe(
+      summary,
+    )
+    expect(events.at(-1)?.type).toBe("response.completed")
+  })
+
+  test("replays Messages compaction without losing additional tools", async () => {
+    providerConfig = {
+      apiKey: "provider-key",
+      authType: "authorization",
+      baseUrl: "https://openai-responses.example",
+      models: { "glm-5.3": {} },
+      name: "ali",
+      type: "openai-responses",
+    }
+
+    const response = await createApp().request("/ali/v1/responses", {
+      body: JSON.stringify({
+        input: [
+          {
+            role: "developer",
+            tools: [{ name: "apply_patch", type: "custom" }],
+            type: "additional_tools",
+          },
+          { content: "old", role: "user", type: "message" },
+          {
+            encrypted_content: encodeMessagesCompaction("Validated handoff"),
+            id: "cmp-1",
+            type: "compaction",
+          },
+          { content: "continue", role: "user", type: "message" },
+        ],
+        model: "glm-5.3",
+      }),
+      headers: {
+        "content-type": "application/json",
+        "user-agent": "codex-cli/1.0.0",
+      },
+      method: "POST",
+    })
+
+    expect(response.status).toBe(200)
+    const [, init] = fetchMock.mock.calls[0]
+    const body = parseJsonRequestBody(init?.body) as {
+      input: Array<Record<string, unknown>>
+    }
+    expect(body.input).toHaveLength(3)
+    expect(body.input[0]).toMatchObject({ role: "developer", type: "message" })
+    expect(body.input[0]?.content).toContain("Validated handoff")
+    expect(body.input[1]?.type).toBe("additional_tools")
+    expect(body.input[2]).toMatchObject({ content: "continue", role: "user" })
+  })
+
+  test("adds Codex phases to direct provider Responses results", async () => {
+    providerConfig = {
+      apiKey: "provider-key",
+      authType: "authorization",
+      baseUrl: "https://openai-responses.example",
+      models: { "glm-5.3": {} },
+      name: "ali",
+      type: "openai-responses",
+    }
+    fetchMock.mockImplementation((_url, init) => {
+      const body = parseJsonRequestBody(init?.body) as { model: string }
+      return Promise.resolve(
+        Response.json({
+          ...createResponsesResult(body.model),
+          output: [
+            {
+              content: [
+                { annotations: [], text: "Working", type: "output_text" },
+              ],
+              id: "msg-1",
+              role: "assistant",
+              status: "completed",
+              type: "message",
+            },
+            {
+              arguments: "{}",
+              call_id: "call-1",
+              id: "fc-1",
+              name: "read_file",
+              namespace: "workspace",
+              type: "function_call",
+            },
+          ],
+        }),
+      )
+    })
+
+    const response = await createApp().request("/ali/v1/responses", {
+      body: JSON.stringify({ input: "hello", model: "glm-5.3" }),
+      headers: {
+        "content-type": "application/json",
+        "user-agent": "codex-cli/1.0.0",
+      },
+      method: "POST",
+    })
+    const body = (await response.json()) as ResponsesResult
+    expect(body.output[0]).toMatchObject({ phase: "commentary" })
+  })
+
+  test("buffers provider stream text until a later tool call sets commentary", async () => {
+    providerConfig = {
+      apiKey: "provider-key",
+      authType: "authorization",
+      baseUrl: "https://openai-responses.example",
+      models: { "glm-5.3": {} },
+      name: "ali",
+      type: "openai-responses",
+    }
+    const output = [
+      {
+        content: [{ annotations: [], text: "Checking", type: "output_text" }],
+        id: "msg-1",
+        role: "assistant",
+        status: "completed",
+        type: "message",
+      },
+      {
+        arguments: "{}",
+        call_id: "call-1",
+        id: "fc-1",
+        name: "read_file",
+        type: "function_call",
+      },
+    ] as ResponsesResult["output"]
+    const streamEvents = [
+      {
+        item: output[0],
+        output_index: 0,
+        sequence_number: 1,
+        type: "response.output_item.added",
+      },
+      {
+        content_index: 0,
+        delta: "Checking",
+        item_id: "msg-1",
+        output_index: 0,
+        sequence_number: 2,
+        type: "response.output_text.delta",
+      },
+      {
+        item: output[1],
+        output_index: 1,
+        sequence_number: 3,
+        type: "response.output_item.added",
+      },
+      {
+        response: { ...createResponsesResult("glm-5.3"), output },
+        sequence_number: 4,
+        type: "response.completed",
+      },
+    ]
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(
+        new Response(
+          streamEvents
+            .map(
+              (event) =>
+                `event: ${event.type}\ndata: ${JSON.stringify(event)}\n\n`,
+            )
+            .join("") + "data: [DONE]\n\n",
+          { headers: { "content-type": "text/event-stream" } },
+        ),
+      ),
+    )
+
+    const response = await createApp().request("/ali/v1/responses", {
+      body: JSON.stringify({ input: "hello", model: "glm-5.3", stream: true }),
+      headers: {
+        "content-type": "application/json",
+        "user-agent": "codex-cli/1.0.0",
+      },
+      method: "POST",
+    })
+    const responseText = await response.text()
+    const responseEvents = responseText
+      .split("\n")
+      .filter((line) => line.startsWith("data: "))
+      .filter((line) => line !== "data: [DONE]")
+      .map((line) => JSON.parse(line.slice(6)) as Record<string, unknown>)
+
+    expect(responseEvents.map((event) => event.sequence_number)).toEqual([
+      1, 2, 3, 4,
+    ])
+    expect(responseEvents[0]).toMatchObject({
+      item: { phase: "commentary" },
+    })
+    const completedResponse = responseEvents[3]?.response as
+      | ResponsesResult
+      | undefined
+    expect(completedResponse?.output[0]).toMatchObject({
+      phase: "commentary",
+    })
+    expect(responseText.indexOf("response.completed")).toBeLessThan(
+      responseText.indexOf("[DONE]"),
+    )
+  })
+
   test("keeps codex-prefixed provider models on the native Responses route for Codex clients", async () => {
     providerConfig = {
       apiKey: "provider-key",
@@ -671,6 +1205,68 @@ describe("provider Responses context management", () => {
       input: "hello",
       model: "codex-mini-latest",
     })
+  })
+
+  test("keeps native compaction for the built-in Codex provider", async () => {
+    const originalCodexAccessToken = state.codexAccessToken
+    const originalCodexAccountId = state.codexAccountId
+    providerConfig = {
+      apiKey: "",
+      authType: "oauth2",
+      baseUrl: "https://chatgpt.example/backend-api",
+      models: { "gpt-test": {} },
+      name: "codex",
+      type: "openai-responses",
+    }
+    state.codexAccessToken = "synthetic-codex-token"
+    state.codexAccountId = "synthetic-account"
+    fetchMock.mockImplementation((_url, init) => {
+      const requestBody = parseJsonRequestBody(init?.body) as {
+        input: Array<Record<string, unknown>>
+        model: string
+      }
+      expect(requestBody.input.at(-1)?.type).toBe("compaction_trigger")
+      return Promise.resolve(
+        Response.json({
+          ...createResponsesResult(requestBody.model),
+          output: [
+            {
+              encrypted_content: "native-compaction",
+              id: "cmp-native",
+              type: "compaction",
+            },
+          ],
+        }),
+      )
+    })
+
+    try {
+      const response = await createApp().request("/codex/v1/responses", {
+        body: JSON.stringify({
+          input: [
+            { content: "compact", role: "user", type: "message" },
+            { type: "compaction_trigger" },
+          ],
+          model: "gpt-test",
+        }),
+        headers: {
+          "content-type": "application/json",
+          "user-agent": "codex-cli/1.0.0",
+        },
+        method: "POST",
+      })
+
+      expect(response.status).toBe(200)
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+      expect(fetchMock.mock.calls[0]?.[0]).toBe(
+        "https://chatgpt.example/backend-api/codex/responses",
+      )
+      const body = (await response.json()) as ResponsesResult
+      expect(body.output[0]?.type).toBe("compaction")
+    } finally {
+      state.codexAccessToken = originalCodexAccessToken
+      state.codexAccountId = originalCodexAccountId
+    }
   })
 
   test("propagates provider-scoped client cancellation upstream without a 500", async () => {
@@ -790,6 +1386,7 @@ describe("provider Responses context management", () => {
       models: { "chat-test": {} },
       name: "openai",
       type: "openai-compatible",
+      codexResponsesMode: "direct",
     }
     fetchMock.mockImplementation((_url, init) => {
       const body = parseJsonRequestBody(init?.body) as {
@@ -879,7 +1476,10 @@ describe("provider Responses context management", () => {
           { type: "message", role: "user", content: "Update and read" },
         ],
       }),
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        "user-agent": "codex-cli/1.0.0",
+      },
       method: "POST",
     })
 
@@ -959,7 +1559,10 @@ describe("provider Responses context management", () => {
           { type: "message", role: "user", content: "Update the file" },
         ],
       }),
-      headers: { "content-type": "application/json" },
+      headers: {
+        "content-type": "application/json",
+        "user-agent": "codex-cli/1.0.0",
+      },
       method: "POST",
     })
 
@@ -968,6 +1571,8 @@ describe("provider Responses context management", () => {
     expect(fetchMock.mock.calls[0]?.[0]).toBe(
       "https://kimi.example/v1/chat/completions",
     )
+    const responseBody = (await response.json()) as ResponsesResult
+    expect(responseBody.output[0]).toMatchObject({ phase: "final_answer" })
   })
 
   test("adapts Responses Lite directly to an Anthropic Messages provider", async () => {

@@ -6,7 +6,9 @@ import { logCodexRateLimitsEvent } from "~/lib/codex-rate-limit"
 import {
   type ModelConfig,
   type ProviderType,
+  type ResolvedProviderConfig,
   isResponsesProviderType,
+  resolveCodexResponsesMode,
   resolveEffectiveProviderType,
 } from "~/lib/config"
 import { HTTPError } from "~/lib/error"
@@ -20,9 +22,15 @@ import {
 } from "~/lib/token-usage"
 import { isResponsesStream } from "~/lib/utils"
 import { isCodexUserAgent } from "~/routes/models/codex-models"
+import { replayMessagesCompactionForNativeResponses } from "~/routes/responses/compaction-replay"
+import {
+  normalizeResponseMessagePhases,
+  normalizeResponsePhaseStreamItems,
+} from "~/routes/responses/phase-normalization"
 import {
   applyResponsesApiContextManagement,
   compactInputByLatestCompaction,
+  hasTerminalCompactionTrigger,
   removeUnlinkedToolCallOutputs,
   sanitizeProviderUnsupportedInputFields,
 } from "~/routes/responses/utils"
@@ -84,6 +92,7 @@ export async function handleProviderResponsesForProvider(
     providerConfig,
     payload.model,
   )
+  const isCodexClient = isCodexUserAgent(c.req.header("user-agent"))
   const normalizedReasoningEffort = normalizeProviderResponsesReasoningEffort(
     payload,
     providerConfig,
@@ -109,7 +118,15 @@ export async function handleProviderResponsesForProvider(
     )
   }
 
-  if (shouldFallbackToMessages(c, payload.model, effectiveType)) {
+  if (
+    shouldFallbackToMessages(
+      isCodexClient,
+      providerConfig,
+      payload,
+      payload.model,
+      effectiveType,
+    )
+  ) {
     return await handleResponsesViaMessages(c, {
       payload,
       publicModel: options.publicModel ?? payload.model,
@@ -126,6 +143,12 @@ export async function handleProviderResponsesForProvider(
         },
       },
       400,
+    )
+  }
+
+  if (isCodexClient && replayMessagesCompactionForNativeResponses(payload)) {
+    logger.debug(
+      "Replayed a Messages-backed compaction instead of forwarding its local encrypted content to the provider Responses API",
     )
   }
 
@@ -171,6 +194,7 @@ export async function handleProviderResponsesForProvider(
     if (payload.stream && isResponsesStream(upstreamResponse)) {
       return streamProviderResponses(c, upstreamResponse, {
         normalizeCodex: true,
+        normalizePhases: false,
         provider,
         recordUsage,
       })
@@ -208,6 +232,7 @@ export async function handleProviderResponsesForProvider(
       getResponsesEvents(upstreamResponse, c.req.raw.signal),
       {
         normalizeCodex: false,
+        normalizePhases: isCodexClient,
         provider,
         recordUsage,
       },
@@ -219,11 +244,20 @@ export async function handleProviderResponsesForProvider(
     .json()) as ResponsesResult
   recordUsage(normalizeResponsesUsage(responseBody.usage))
 
-  return createProviderProxyResponse(upstreamResponse)
+  if (!isCodexClient) {
+    return createProviderProxyResponse(upstreamResponse)
+  }
+
+  return createProviderProxyResponse(
+    upstreamResponse,
+    JSON.stringify(normalizeResponseMessagePhases(responseBody)),
+  )
 }
 
 const shouldFallbackToMessages = (
-  c: Context,
+  isCodexClient: boolean,
+  providerConfig: ResolvedProviderConfig,
+  payload: ResponsesPayload,
   modelId: string,
   effectiveType: ProviderType,
 ): boolean => {
@@ -231,11 +265,24 @@ const shouldFallbackToMessages = (
     return true
   }
 
-  if (isCodexUserAgent(c.req.header("user-agent"))) {
-    return !(modelId.startsWith("gpt") || modelId.startsWith("codex"))
+  // compaction_trigger is a Codex Responses extension rather than a portable
+  // provider capability. Generate a local Messages-backed compaction carrier
+  // for third-party Responses providers, then replay it on the next direct
+  // Responses turn. The built-in Codex provider keeps native compaction.
+  if (
+    isCodexClient
+    && providerConfig.name !== "codex"
+    && isResponsesProviderType(effectiveType)
+    && hasTerminalCompactionTrigger(payload)
+  ) {
+    return true
   }
 
-  return false
+  return (
+    isCodexClient
+    && resolveCodexResponsesMode(providerConfig, modelId, effectiveType)
+      === "messages"
+  )
 }
 
 const createProviderResponsesUsageRecorder = (
@@ -262,6 +309,7 @@ const streamProviderResponses = async (
   upstreamResponse: ResponsesStream,
   options: {
     normalizeCodex: boolean
+    normalizePhases: boolean
     provider: string
     recordUsage: (usage: UsageTokens) => void
   },
@@ -301,6 +349,51 @@ const streamProviderResponses = async (
 
   return streamSSE(c, async (stream) => {
     let usage: UsageTokens = {}
+
+    if (options.normalizePhases) {
+      const source = (async function* () {
+        const chunks = (async function* () {
+          yield firstChunk
+          for await (const chunk of {
+            [Symbol.asyncIterator]: () => iterator,
+          }) {
+            yield chunk
+          }
+        })()
+
+        for await (const chunk of chunks) {
+          debugJson(logger, "Responses stream chunk:", chunk)
+          if (!chunk.data || chunk.data === "[DONE]") {
+            yield { event: null, value: chunk }
+            continue
+          }
+
+          const event = parseProviderResponsesStreamEvent(chunk.data, {
+            normalizeCodex: options.normalizeCodex,
+            provider: options.provider,
+          })
+          yield { event, value: chunk }
+        }
+      })()
+
+      try {
+        for await (const item of normalizeResponsePhaseStreamItems(source)) {
+          const { event } = item
+          if (event) {
+            const nextUsage = getResponsesStreamEventUsage(event)
+            if (nextUsage) usage = nextUsage
+          }
+          await stream.writeSSE({
+            data: event ? JSON.stringify(event) : (item.value.data ?? ""),
+            event: event?.type ?? item.value.event,
+          })
+        }
+      } finally {
+        await iterator.return?.()
+        options.recordUsage(usage)
+      }
+      return
+    }
 
     const writeChunk = async (chunk: typeof firstChunk) => {
       debugJson(logger, "Responses stream chunk:", chunk)

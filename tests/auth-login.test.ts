@@ -11,6 +11,7 @@ interface ConfigFileShape {
       apiKey?: string
       authType?: string
       baseUrl?: string
+      codexResponsesMode?: "direct" | "messages"
       enabled?: boolean
       models?: Record<string, unknown>
       pricingCurrency?: string
@@ -446,6 +447,7 @@ describe("auth login validation", () => {
         dashscope: {
           apiKey: "old-key",
           baseUrl: "https://old.example",
+          codexResponsesMode: "messages",
           enabled: true,
           models: {
             "qwen-plus": {
@@ -474,6 +476,7 @@ describe("auth login validation", () => {
     expect(readConfigFile(tempDir).providers?.dashscope).toEqual({
       apiKey: "new-key",
       baseUrl: "https://dashscope.aliyuncs.com/compatible-mode",
+      codexResponsesMode: "messages",
       enabled: true,
       models: {
         "qwen-plus": {

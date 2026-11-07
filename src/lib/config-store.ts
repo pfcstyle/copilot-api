@@ -85,7 +85,10 @@ export interface ModelConfig {
   supportPdf?: boolean
   toolContentSupportType?: Array<ToolContentSupportType>
   type?: ProviderType
+  codexResponsesMode?: CodexResponsesMode
 }
+
+export type CodexResponsesMode = "direct" | "messages"
 
 export type CodexReasoningEffort =
   | "none"
@@ -115,6 +118,7 @@ export interface ProviderConfig {
   authType?: ProviderAuthType
   pricingCurrency?: string
   models?: Record<string, ModelConfig>
+  codexResponsesMode?: CodexResponsesMode
 }
 
 const gpt5ExplorationPrompt = `## Exploration and reading files

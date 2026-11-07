@@ -126,6 +126,9 @@ function buildProviderConfig(
     ...(existingProviderConfig.models ?
       { models: existingProviderConfig.models }
     : {}),
+    ...(existingProviderConfig.codexResponsesMode ?
+      { codexResponsesMode: existingProviderConfig.codexResponsesMode }
+    : {}),
   }
 }
 
@@ -241,7 +244,8 @@ export function configureDesktopProvider(
 }
 
 export interface ConfigureProviderStatusDependencies
-  extends ProviderConfigDependencies, AuthStatusDependencies {}
+  extends ProviderConfigDependencies,
+    AuthStatusDependencies {}
 
 export async function configureProviderWithAuthStatus(
   input: ProviderAuthInput,

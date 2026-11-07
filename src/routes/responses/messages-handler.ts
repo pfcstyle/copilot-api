@@ -8,7 +8,10 @@ import type { SubagentMarker } from "~/lib/subagent"
 import type { AnthropicResponse } from "~/lib/types/anthropic"
 import type { ResponsesPayload } from "~/lib/types/responses"
 import { handleCompletionPayload } from "~/routes/messages/handler"
-import { shouldInjectMessagesToolCallTips } from "~/routes/models/codex-models"
+import {
+  isCodexUserAgent,
+  shouldInjectMessagesToolCallTips,
+} from "~/routes/models/codex-models"
 
 import {
   responsesResultToStreamEvents,
@@ -20,6 +23,10 @@ import {
   translateResponsesToMessages,
   type MessagesResponseTranslationContext,
 } from "./messages-translation"
+import {
+  normalizeResponseMessagePhases,
+  normalizeResponsePhaseEvents,
+} from "./phase-normalization"
 
 const logger = createHandlerLogger("responses-messages-handler")
 
@@ -39,6 +46,7 @@ export async function handleResponsesViaMessages(
   },
 ): Promise<Response> {
   try {
+    const normalizePhases = isCodexUserAgent(c.req.header("user-agent"))
     const translation = translateResponsesToMessages(
       { ...options.payload, model: options.publicModel },
       {
@@ -87,7 +95,12 @@ export async function handleResponsesViaMessages(
           502,
         )
       }
-      return streamTranslatedMessagesEvents(c, messagesResponse, context)
+      return streamTranslatedMessagesEvents(
+        c,
+        messagesResponse,
+        context,
+        normalizePhases,
+      )
     }
 
     const body = await messagesResponse.json()
@@ -97,7 +110,11 @@ export async function handleResponsesViaMessages(
         502,
       )
     }
-    const result = translateAnthropicToResponses(body, context)
+    const translatedResult = translateAnthropicToResponses(body, context)
+    const result =
+      normalizePhases ?
+        normalizeResponseMessagePhases(translatedResult)
+      : translatedResult
     debugJson(logger, "Translated Responses result:", result)
 
     if (!translation.messagesPayload.stream) {
@@ -131,12 +148,15 @@ function streamTranslatedMessagesEvents(
   c: Context,
   response: Response,
   context: MessagesResponseTranslationContext,
+  normalizePhases: boolean,
 ): Response {
   return streamSSE(c, async (stream) => {
-    for await (const event of translateMessagesStream(
-      events(response),
-      context,
-    )) {
+    const translatedEvents = translateMessagesStream(events(response), context)
+    const responseEvents =
+      normalizePhases ?
+        normalizeResponsePhaseEvents(translatedEvents)
+      : translatedEvents
+    for await (const event of responseEvents) {
       debugJson(logger, "Translated Responses stream event:", event)
       await stream.writeSSE({
         event: event.type,

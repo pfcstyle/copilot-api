@@ -898,6 +898,9 @@ describe("model routes", () => {
           "ali",
           "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
         ),
+        models: {
+          "fallback-only": { codexResponsesMode: "messages" },
+        },
         type: "openai-responses",
       },
     }
@@ -913,6 +916,7 @@ describe("model routes", () => {
     expect(
       body.models.find((model) => model.slug === "ali/qwen-plus"),
     ).toMatchObject({
+      description: "qwen-plus through the ali Responses adapter.",
       default_reasoning_level: "medium",
       supported_reasoning_levels: [
         { effort: "low", description: "low reasoning effort" },
@@ -922,6 +926,13 @@ describe("model routes", () => {
         { effort: "max", description: "max reasoning effort" },
         { effort: "ultra", description: "ultra reasoning effort" },
       ],
+    })
+    expect(
+      body.models.find((model) => model.slug === "ali/fallback-only"),
+    ).toMatchObject({
+      description:
+        "fallback-only through the ali Messages-to-Responses adapter.",
+      use_responses_lite: true,
     })
   })
 

@@ -391,6 +391,9 @@ function buildCustomProviderConfig(
     ...(existingProviderConfig.models ?
       { models: existingProviderConfig.models }
     : {}),
+    ...(existingProviderConfig.codexResponsesMode ?
+      { codexResponsesMode: existingProviderConfig.codexResponsesMode }
+    : {}),
   }
 }
 

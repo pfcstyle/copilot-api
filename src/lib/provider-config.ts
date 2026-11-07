@@ -7,6 +7,7 @@ import {
   reloadConfig,
   writeConfigToDisk,
   type ModelConfig,
+  type CodexResponsesMode,
   type ProviderAuthType,
   type ProviderConfig,
   type ProviderType,
@@ -20,6 +21,7 @@ export interface ResolvedProviderConfig {
   authType: ProviderAuthType
   pricingCurrency?: string
   models?: Record<string, ModelConfig>
+  codexResponsesMode?: CodexResponsesMode
 }
 
 const OPENCODE_ANTHROPIC_MODEL_PATTERN = /^(?:qwen|minimax)/iu
@@ -199,7 +201,16 @@ export function getProviderConfig(name: string): ResolvedProviderConfig | null {
     authType,
     pricingCurrency: normalizePricingCurrency(provider.pricingCurrency),
     models: provider.models,
+    codexResponsesMode: normalizeCodexResponsesMode(
+      provider.codexResponsesMode,
+    ),
   }
+}
+
+function normalizeCodexResponsesMode(
+  value: unknown,
+): CodexResponsesMode | undefined {
+  return value === "direct" || value === "messages" ? value : undefined
 }
 
 export function resolveEffectiveProviderType(
@@ -221,6 +232,24 @@ export function resolveEffectiveProviderType(
   }
 
   return providerConfig.type
+}
+
+export function resolveCodexResponsesMode(
+  providerConfig: ResolvedProviderConfig,
+  model: string,
+  effectiveType = resolveEffectiveProviderType(providerConfig, model),
+): CodexResponsesMode {
+  if (!isResponsesProviderType(effectiveType)) {
+    return "messages"
+  }
+
+  return (
+    normalizeCodexResponsesMode(
+      providerConfig.models?.[model]?.codexResponsesMode,
+    )
+    ?? providerConfig.codexResponsesMode
+    ?? "direct"
+  )
 }
 
 function normalizePricingCurrency(
